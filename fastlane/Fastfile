@@ -358,6 +358,10 @@ module Ship
   # ---------------------------------------------------------------- Google Play
 
   # Service account JSON from SHIP_PLAY_JSON (CI) or the vault.
+  def play_key?
+    ENV['SHIP_PLAY_JSON'].to_s != '' || Vault.exist?(Vault.play_key_path(play['service_account']))
+  end
+
   def with_play_key(&block)
     return yield(ENV['SHIP_PLAY_JSON']) if ENV['SHIP_PLAY_JSON'].to_s != ''
     name = play['service_account']
@@ -631,11 +635,15 @@ platform :android do
     Ship.preflight!(metadata: false)
     Ship::Vault.sync!
     Ship.require_keystore!
-    Ship.with_play_key do |json_key|
-      name, = Ship.pubspec_version
-      code, = Ship.next_version_code(json_key)
-      UI.success("Built #{Ship.build_aab(name, code)} (#{name}, #{code})")
-    end
+    name, pubspec_code = Ship.pubspec_version
+    code = if Ship.play_key?
+             Ship.with_play_key { |json_key| Ship.next_version_code(json_key).first }
+           else
+             # Only safe before the first upload: Play cannot be asked which codes it has seen.
+             UI.important('No Play service account in the vault: using the pubspec build number.')
+             [pubspec_code, 1].max
+           end
+    UI.success("Built #{Ship.build_aab(name, code)} (#{name}, #{code})")
   end
 
   desc 'Move a release between tracks. Defaults: from the configured track to production, as a draft'
