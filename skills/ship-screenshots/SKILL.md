@@ -20,11 +20,13 @@ style:
   text: "#3A2A00"                      # caption colour with strong contrast
   icon_background: "#FFFFFF"           # optional: fill behind a transparent icon
   # font: assets/fonts/Brand-Bold.ttf  # optional: the app's display font (default Poppins Bold)
+  crop_top: 63                         # status bar height in raw px (`adb shell dumpsys window | grep statusBars`)
 feature_graphic:
   tagline: { fr-FR: "...", en-US: "..." }
 shots:
   - id: home
     caption: { fr-FR: "Toute votre ville dans votre poche", en-US: "Your whole town in your pocket" }
+    redact: [[890, 120, 1018, 248]]    # optional blur boxes in raw px (avatar, name); or per locale: {fr-FR: [...]}
 ```
 
 Captions: 2-6 words, a benefit rather than a feature name, written natively per locale.
@@ -33,7 +35,11 @@ Captions: 2-6 words, a benefit rather than a feature name, written natively per 
 
 1. `$SHOTS boot` starts the first AVD if no device is connected. Phones need a 9:16 or taller screen (any Pixel AVD).
 2. Build and install a release-like APK without the debug banner: `flutter build apk --release` (debug signing is fine for local screenshots), then `$SHOTS install build/app/outputs/flutter-apk/app-release.apk`.
-3. `$SHOTS prep` sets a clean status bar (10:00, full battery and signal, no notifications).
+3. `$SHOTS prep` sets a clean status bar (10:00, full battery and signal, no notifications). Crop it anyway with `crop_top`: leftover system icons and white-on-light icons look broken.
+4. If the app shows maps or uses location, put the emulator in the app's town: `$SHOTS geo <lat> <lon>`. The default emulator position is California.
+5. Close other apps' "not responding" dialogs (`tap-text "Close app"`) before capturing.
+
+The emulator dies with the shell that started it on hosts that forbid job breakaway. In Claude Code, start it with a background Bash task that runs `emulator -avd <name> -no-snapshot-save` directly, so it lives as long as that task.
 
 ## 3. Data and login
 
@@ -42,12 +48,12 @@ Screens need realistic content. In order of preference:
 2. If the app needs sign-in, sign in through the UI with the demo account: `tap-text`, then `type`.
 3. If no demo data exists, ask the user once whether to create a demo account or seed data.
 
-Content shown in screenshots is public. No real people's personal data, no internal tooling, no placeholder lorem ipsum.
+Content shown in screenshots is public. No real people's personal data, no internal tooling, no placeholder lorem ipsum. Blur the signed-in account's avatar or name with `redact`. Never open screens that show the account's email. Content from a real third party (a shop's card, photos, logos) needs the owner's agreement: hold the shot back and ask the user. Sample data labelled as such ("sondage d'exemple", one vote at 100 %) reads as fake: prefer another screen.
 
 ## 4. Capture loop (per locale)
 
 For each locale in `shots.yml`:
-1. `$SHOTS launch <package> --locale <locale>`. This sets the per-app language (Android 13+) and restarts the app.
+1. `$SHOTS launch <package> --locale <locale>`. This sets the per-app language (Android 13+) and restarts the app. Check with `$SHOTS ui`: apps with their own language setting ignore it, so switch the language in the app's settings instead.
 2. For each shot: navigate with `$SHOTS ui` (on-screen elements with tap coordinates), `tap-text "Label"`, `tap X Y`, `swipe`, `key back`. Wait for images and animations to settle (`sleep 2`), then
    `$SHOTS capture fastlane/shots/raw/<locale>/phone/<id>.png`.
 3. Open the PNG with Read. Retake it if anything is off: loading spinner, keyboard open, toast, half-scrolled list, wrong language, debug banner, or personal data.

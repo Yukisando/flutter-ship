@@ -3,7 +3,7 @@
 
 Device commands (an emulator or phone over adb):
   shots.py devices | boot [--avd NAME] | prep | unprep
-  shots.py install APK | launch PACKAGE [--locale fr-FR] | stop PACKAGE
+  shots.py install APK | launch PACKAGE [--locale fr-FR] | stop PACKAGE | geo LAT LON
   shots.py ui | tap X Y | tap-text LABEL | swipe X1 Y1 X2 Y2 [MS] | type TEXT | key back|home|enter
   shots.py capture OUT.png
 
@@ -131,6 +131,11 @@ def cmd_prep(_):
 def cmd_unprep(_):
     demo("exit")
     print("Demo status bar off")
+
+
+def cmd_geo(a):
+    """Emulator GPS position, so maps and "my location" show the app's own town."""
+    print(adb("emu", "geo", "fix", a.lon, a.lat).strip())
 
 
 def cmd_install(a):
@@ -347,11 +352,28 @@ def paste_with_shadow(canvas, layer, x, y):
     return base.convert("RGB")
 
 
-def render_shot(cfg, raw_path, caption, size):
+def redact(shot, boxes):
+    """Blur each [x1, y1, x2, y2] box (raw pixels) inside an ellipse: avatars, names, emails."""
+    from PIL import Image, ImageDraw, ImageFilter
+    shot = shot.convert("RGB")
+    for x1, y1, x2, y2 in boxes or []:
+        region = shot.crop((x1, y1, x2, y2))
+        blurred = region.filter(ImageFilter.GaussianBlur(max(x2 - x1, y2 - y1) / 4))
+        mask = Image.new("L", region.size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, region.width - 1, region.height - 1), fill=255)
+        shot.paste(blurred, (x1, y1), mask)
+    return shot
+
+
+def render_shot(cfg, raw_path, caption, size, boxes=None):
     from PIL import Image
     w, h = size
     canvas = gradient(size, cfg.get("style", {}).get("background", ["#222222", "#000000"]))
-    shot = Image.open(raw_path)
+    shot = redact(Image.open(raw_path), boxes)
+    # crop_top: drop the status bar (its height in raw pixels), whose icons often clash with the app.
+    top_crop = int(cfg.get("style", {}).get("crop_top", 0))
+    if top_crop:
+        shot = shot.crop((0, top_crop, shot.width, shot.height))
     pad = int(w * 0.07)
     top = int(h * 0.055)
     if caption:
@@ -398,7 +420,10 @@ def cmd_frame(a):
                 raw = shots_dir / locale / kind / f"{s['id']}.png"
                 if not raw.exists():
                     raw = shots_dir / default_locale / kind / f"{s['id']}.png"
-                image = render_shot(cfg, raw, localized(s.get("caption"), locale, default_locale), (w, h))
+                boxes = s.get("redact")
+                if isinstance(boxes, dict):
+                    boxes = boxes.get(locale) or boxes.get(default_locale)
+                image = render_shot(cfg, raw, localized(s.get("caption"), locale, default_locale), (w, h), boxes)
                 name = f"{i:02d}_{s['id']}.png" if store == "android" else f"{i:02d}_{s['id']}_{folder}.png"
                 image.save(out_dir / name, optimize=True)
                 written += 1
@@ -472,6 +497,7 @@ def main():
     b = sub.add_parser("boot"); b.add_argument("--avd"); b.set_defaults(fn=cmd_boot)
     sub.add_parser("prep").set_defaults(fn=cmd_prep)
     sub.add_parser("unprep").set_defaults(fn=cmd_unprep)
+    ge = sub.add_parser("geo"); ge.add_argument("lat"); ge.add_argument("lon"); ge.set_defaults(fn=cmd_geo)
     i = sub.add_parser("install"); i.add_argument("apk"); i.set_defaults(fn=cmd_install)
     l = sub.add_parser("launch"); l.add_argument("package"); l.add_argument("--locale")
     l.add_argument("--wait", type=float, default=4); l.set_defaults(fn=cmd_launch)

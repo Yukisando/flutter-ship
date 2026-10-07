@@ -682,9 +682,14 @@ platform :android do
     Ship.preflight!
     Ship::Vault.sync!
     Ship.with_play_key do |json_key|
+      # supply attaches listing uploads to an existing release: point it at the newest one.
+      latest = Ship.track_releases(json_key).max_by { |r| r[:codes].max || 0 }
+      UI.user_error!('No release on Play yet: upload the first bundle in Play Console') unless latest
       upload_to_play_store(
         package_name: Ship.package,
         json_key: json_key,
+        track: latest[:track],
+        version_code: latest[:codes].max,
         metadata_path: Ship.metadata_dir,
         skip_upload_apk: true,
         skip_upload_aab: true,
