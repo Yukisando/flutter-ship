@@ -184,6 +184,9 @@ module Ship
         decrypt(File.binread(path))
       else
         File.binwrite(path, encrypt('flutter-ship vault'))
+        attributes = File.join(VAULT_DIR, '.gitattributes')
+        File.write(attributes, "*.enc binary
+") unless File.exist?(attributes)
         publish!('Initialise vault')
       end
     end
