@@ -88,9 +88,18 @@ def cmd_boot(a):
     avd = a.avd or (avds[0] if avds else None)
     if not avd:
         sys.exit("No Android Virtual Device. Create one in Android Studio > Device Manager.")
-    subprocess.Popen([str(emulator), "-avd", avd, "-no-snapshot-save", "-no-boot-anim"],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    cmd = [str(emulator), "-avd", avd, "-no-snapshot-save", "-no-boot-anim"]
+    if os.name == "nt":
+        # Break away from the caller's job object, or the emulator dies with the shell that
+        # started it. Some hosts forbid breakaway: then run `boot` from a terminal that stays open.
+        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags | 0x01000000)
+        except PermissionError:
+            print("Note: the emulator will close when this shell's job ends.")
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    else:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     adb("wait-for-device")
     for _ in range(180):
         if shell("getprop", "sys.boot_completed", check=False).strip() == "1":
