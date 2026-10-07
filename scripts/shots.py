@@ -482,6 +482,8 @@ def main():
     g = sub.add_parser("graphics"); g.add_argument("--project", default="."); g.set_defaults(fn=cmd_graphics)
     a = p.parse_args()
     SERIAL = a.serial
+    # Labels can hold any language; a Windows console code page would mangle them.
+    sys.stdout.reconfigure(encoding="utf-8")
     a.fn(a)
 
 
