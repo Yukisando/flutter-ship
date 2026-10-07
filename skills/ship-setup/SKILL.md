@@ -26,7 +26,7 @@ Check each tool. Install only what is missing.
 | Flutter, git, gh | `flutter --version`, `gh auth status` (signed in to the account that owns the vault) | - | - |
 | Android SDK + an emulator (screenshots) | `adb version`, `emulator -list-avds` | Android Studio > Device Manager > a Pixel AVD | same |
 
-On Windows, RubyInstaller puts Ruby in `C:\Ruby33-x64in`. A shell opened before the install does not see it: prepend that folder to PATH for the session.
+On Windows, RubyInstaller puts Ruby in `C:\Ruby33-x64\bin`. A shell opened before the install does not see it: prepend that folder to PATH for the session.
 
 Installing software changes the machine. If the permission system blocks an install, give the user the exact command in a `bash` block and continue with the other checks.
 
