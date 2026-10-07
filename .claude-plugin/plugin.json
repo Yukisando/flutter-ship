@@ -1,8 +1,16 @@
 {
   "name": "flutter-ship",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ship Flutter apps to Google Play (and later the App Store) with fastlane: shared lanes, an encrypted key vault shared across machines, automatic version codes, store listings and screenshots.",
-  "author": { "name": "Nathan de Castro" },
+  "author": {
+    "name": "Nathan de Castro"
+  },
   "repository": "https://github.com/Yukisando/flutter-ship",
-  "keywords": ["flutter", "fastlane", "google-play", "app-store", "release"]
+  "keywords": [
+    "flutter",
+    "fastlane",
+    "google-play",
+    "app-store",
+    "release"
+  ]
 }
