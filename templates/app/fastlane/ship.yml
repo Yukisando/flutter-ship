@@ -1,0 +1,17 @@
+# flutter-ship app settings. Secrets are never stored here: signing keys and the Play
+# service account come from the encrypted vault (~/.ship/vault).
+app_name: My App
+package_name: com.example.myapp
+# Store listing languages (Play language codes). The first one is the default.
+locales: [fr-FR, en-US]
+default_locale: fr-FR
+privacy_url: https://example.com/privacy
+contact:
+  email: hello@example.com
+  website: https://example.com
+play:
+  track: internal          # internal | alpha (closed) | beta (open) | production
+  release_status: draft    # draft: finish the rollout in Play Console
+  service_account: default # name of the key in the vault (google-play/<name>)
+android:
+  build_args: []           # extra `flutter build appbundle` arguments, e.g. --dart-define-from-file=prod.json

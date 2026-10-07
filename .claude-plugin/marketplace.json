@@ -1,0 +1,11 @@
+{
+  "name": "flutter-ship",
+  "owner": { "name": "Nathan de Castro" },
+  "plugins": [
+    {
+      "name": "flutter-ship",
+      "source": "./",
+      "description": "Ship Flutter apps to the stores with fastlane and Claude Code."
+    }
+  ]
+}

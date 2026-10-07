@@ -1,0 +1,744 @@
+# flutter-ship: shared fastlane lanes for Flutter apps.
+#
+# Each app's fastlane/Fastfile imports this file (see templates/app/fastlane/Fastfile).
+#   - App settings:      <app>/fastlane/ship.yml
+#   - Machine settings:  ~/.ship/config.yml
+#   - Secrets:           ~/.ship/vault, a private git repo holding AES-256-GCM encrypted
+#                        upload keystores and Play service account keys, so every machine
+#                        builds with the same keys. Its passphrase lives in ~/.ship/vault.pass
+#                        (or SHIP_VAULT_PASSWORD) and in the owner's password manager.
+#
+# Version codes come from Google Play itself (highest code ever uploaded + 1), so builds made
+# on different machines never collide.
+
+require 'yaml'
+require 'json'
+require 'open3'
+require 'openssl'
+require 'securerandom'
+require 'tmpdir'
+require 'fileutils'
+require 'socket'
+require 'time'
+
+module Ship
+  HOME = File.join(Dir.home, '.ship')
+  CONFIG_FILE = File.join(HOME, 'config.yml')
+  VAULT_DIR = File.join(HOME, 'vault')
+  PASS_FILE = File.join(HOME, 'vault.pass')
+  WINDOWS = Gem.win_platform?
+
+  # Google Play limits, checked before anything is uploaded.
+  TITLE_MAX = 30
+  SHORT_MAX = 80
+  FULL_MAX = 4000
+  CHANGELOG_MAX = 500
+  SCREENSHOT_DIRS = %w[phoneScreenshots sevenInchScreenshots tenInchScreenshots].freeze
+
+  module_function
+
+  # ---------------------------------------------------------------- config
+
+  def fastlane_dir
+    File.expand_path(FastlaneCore::FastlaneFolder.path)
+  end
+
+  def root
+    File.expand_path('..', fastlane_dir)
+  end
+
+  def machine
+    @machine ||= File.exist?(CONFIG_FILE) ? (YAML.safe_load(File.read(CONFIG_FILE)) || {}) : {}
+  end
+
+  def app
+    @app ||= begin
+      path = File.join(fastlane_dir, 'ship.yml')
+      UI.user_error!("Missing #{path}. Run the ship-init skill.") unless File.exist?(path)
+      YAML.safe_load(File.read(path)) || {}
+    end
+  end
+
+  def package
+    app['package_name'] || UI.user_error!('package_name is missing from fastlane/ship.yml')
+  end
+
+  def play
+    { 'track' => 'internal', 'release_status' => 'draft', 'service_account' => 'default' }
+      .merge(app['play'] || {})
+  end
+
+  def locales
+    app['locales'] || ['en-US']
+  end
+
+  def metadata_dir
+    File.join(fastlane_dir, 'metadata', 'android')
+  end
+
+  # "version: 1.2.3+45" in pubspec.yaml -> ["1.2.3", 45]
+  def pubspec_version
+    line = File.read(File.join(root, 'pubspec.yaml'))[/^version:\s*(\S+)/, 1]
+    UI.user_error!('pubspec.yaml has no version line') unless line
+    name, build = line.split('+')
+    [name, build.to_i]
+  end
+
+  # ---------------------------------------------------------------- shell helpers
+
+  def capture!(*cmd, env: {})
+    out, status = Open3.capture2e(env, *cmd)
+    UI.user_error!("#{File.basename(cmd.first.to_s)} failed:\n#{out}") unless status.success?
+    out
+  end
+
+  def with_env(vars)
+    old = vars.keys.to_h { |k| [k, ENV[k]] }
+    vars.each { |k, v| ENV[k] = v }
+    yield
+  ensure
+    old&.each { |k, v| ENV[k] = v }
+  end
+
+  def keytool
+    @keytool ||= begin
+      exe = WINDOWS ? 'keytool.exe' : 'keytool'
+      program_files = ENV['ProgramFiles'].to_s.tr('\\', '/')
+      dirs = []
+      dirs << File.join(ENV['JAVA_HOME'], 'bin') if ENV['JAVA_HOME']
+      dirs += ENV['PATH'].to_s.split(File::PATH_SEPARATOR)
+      dirs += [
+        File.join(ENV['LOCALAPPDATA'].to_s, 'Programs', 'Android Studio', 'jbr', 'bin'),
+        File.join(program_files, 'Android', 'Android Studio', 'jbr', 'bin'),
+        '/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin',
+        '/opt/android-studio/jbr/bin'
+      ]
+      dirs += Dir.glob(File.join(program_files, 'Java', '*', 'bin')) unless program_files.empty?
+      found = dirs.map { |d| File.join(d, exe) }.find { |p| File.file?(p) }
+      found || UI.user_error!('keytool not found. Install Android Studio or a JDK, or set JAVA_HOME.')
+    end
+  end
+
+  def sha256_in(keytool_output)
+    keytool_output[/SHA-?256:\s*([0-9A-F:]{95})/, 1]
+  end
+
+  # ---------------------------------------------------------------- vault
+
+  module Vault
+    MAGIC = 'SHIPV1'.b
+    ITERATIONS = 200_000
+    CHECK_FILE = '.check.enc'
+
+    module_function
+
+    def keystore_path(pkg) = "android/#{pkg}/upload.jks.enc"
+    def signing_path(pkg) = "android/#{pkg}/signing.json.enc"
+    def info_path(pkg) = "android/#{pkg}/info.yml"
+    def play_key_path(name) = "google-play/#{name}.json.enc"
+
+    def repo_url
+      Ship.machine['vault_repo'] ||
+        UI.user_error!("Set vault_repo in #{CONFIG_FILE} (the ship-setup skill does this).")
+    end
+
+    def passphrase
+      @passphrase ||= begin
+        pass = ENV['SHIP_VAULT_PASSWORD'].to_s
+        pass = File.read(PASS_FILE).strip if pass.empty? && File.exist?(PASS_FILE)
+        if pass.empty?
+          UI.user_error!("No vault passphrase on this machine. Copy it from your password manager into #{PASS_FILE}.")
+        end
+        pass
+      end
+    end
+
+    def git(*args, allow_failure: false)
+      out, status = Open3.capture2e('git', '-C', VAULT_DIR, *args)
+      UI.user_error!("git #{args.join(' ')} failed in #{VAULT_DIR}:\n#{out}") unless status.success? || allow_failure
+      [out, status.success?]
+    end
+
+    # Clones the vault on first use and pulls on every run, so all machines share one set of keys.
+    def sync!
+      return if @synced
+      if Dir.exist?(File.join(VAULT_DIR, '.git'))
+        _, has_commits = git('rev-parse', '--verify', 'HEAD', allow_failure: true)
+        if has_commits
+          _, ok = git('pull', '--rebase', '--quiet', allow_failure: true)
+          UI.important('Could not pull the vault (offline?). Using the local copy.') unless ok
+        end
+      else
+        FileUtils.mkdir_p(HOME)
+        out, status = Open3.capture2e('git', 'clone', '--quiet', repo_url, VAULT_DIR)
+        UI.user_error!("Could not clone the vault #{repo_url}:\n#{out}") unless status.success?
+      end
+      check_passphrase!
+      @synced = true
+    end
+
+    # A small known file proves the passphrase before any real secret is touched.
+    def check_passphrase!
+      path = File.join(VAULT_DIR, CHECK_FILE)
+      if File.exist?(path)
+        decrypt(File.binread(path))
+      else
+        File.binwrite(path, encrypt('flutter-ship vault'))
+        publish!('Initialise vault')
+      end
+    end
+
+    def derive(salt)
+      OpenSSL::PKCS5.pbkdf2_hmac(passphrase, salt, ITERATIONS, 32, 'sha256')
+    end
+
+    # Layout: MAGIC | salt(16) | iv(12) | tag(16) | ciphertext
+    def encrypt(data)
+      salt = SecureRandom.random_bytes(16)
+      iv = SecureRandom.random_bytes(12)
+      cipher = OpenSSL::Cipher.new('aes-256-gcm').encrypt
+      cipher.key = derive(salt)
+      cipher.iv = iv
+      cipher.auth_data = MAGIC
+      body = cipher.update(data.b) + cipher.final
+      MAGIC + salt + iv + cipher.auth_tag + body
+    end
+
+    def decrypt(blob)
+      blob = blob.b
+      UI.user_error!('Not a flutter-ship vault file') unless blob.start_with?(MAGIC)
+      cipher = OpenSSL::Cipher.new('aes-256-gcm').decrypt
+      cipher.key = derive(blob[6, 16])
+      cipher.iv = blob[22, 12]
+      cipher.auth_tag = blob[34, 16]
+      cipher.auth_data = MAGIC
+      cipher.update(blob[50..]) + cipher.final
+    rescue OpenSSL::Cipher::CipherError
+      UI.user_error!("The vault passphrase in #{PASS_FILE} is wrong, or the file is damaged.")
+    end
+
+    def exist?(rel)
+      File.exist?(File.join(VAULT_DIR, rel))
+    end
+
+    def read(rel)
+      path = File.join(VAULT_DIR, rel)
+      UI.user_error!("The vault has no #{rel}") unless File.exist?(path)
+      decrypt(File.binread(path))
+    end
+
+    def write(rel, data)
+      path = File.join(VAULT_DIR, rel)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.binwrite(path, encrypt(data))
+    end
+
+    def write_plain(rel, text)
+      path = File.join(VAULT_DIR, rel)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, text)
+    end
+
+    # Commits and pushes. A secret that only exists on one machine is the problem the vault
+    # solves, so a failed push stops the run.
+    def publish!(message)
+      git('add', '-A')
+      _, clean = git('diff', '--cached', '--quiet', allow_failure: true)
+      return if clean
+      git('commit', '--quiet', '-m', "#{message} (#{Socket.gethostname})")
+      out, ok = git('push', '--quiet', '-u', 'origin', 'HEAD', allow_failure: true)
+      return if ok
+      UI.user_error!("Saved in #{VAULT_DIR} but not pushed:\n#{out}\nRun `git -C ~/.ship/vault push` once online.")
+    end
+
+    # Decrypts a vault file into a private temp dir that is removed after the block.
+    def with_file(rel, name)
+      dir = Dir.mktmpdir('ship-')
+      path = File.join(dir, name)
+      File.binwrite(path, read(rel))
+      yield path
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+  end
+
+  # ---------------------------------------------------------------- signing
+
+  def signing_data
+    JSON.parse(Vault.read(Vault.signing_path(package)))
+  end
+
+  def keystore?
+    Vault.exist?(Vault.keystore_path(package))
+  end
+
+  def require_keystore!
+    return if keystore?
+    UI.user_error!("The vault has no upload key for #{package}. Create one with `bundle exec fastlane android keystore`, " \
+                   'or import the existing one with `bundle exec fastlane android keystore import:path/to/key.jks`.')
+  end
+
+  def owner
+    machine['owner_name'] || app['owner_name'] || 'Unknown'
+  end
+
+  def save_keystore!(jks_bytes, data, note)
+    Vault.write(Vault.keystore_path(package), jks_bytes)
+    Vault.write(Vault.signing_path(package), JSON.pretty_generate(data))
+    Vault.write_plain(Vault.info_path(package), {
+      'package_name' => package,
+      'alias' => data['alias'],
+      'sha256' => data['sha256'],
+      'created_at' => data['created_at'],
+      'created_on' => Socket.gethostname
+    }.to_yaml)
+    Vault.publish!("#{note} for #{package}")
+  end
+
+  def create_keystore!
+    UI.user_error!("The vault already has an upload key for #{package}.") if keystore?
+    password = SecureRandom.alphanumeric(32)
+    Dir.mktmpdir('ship-') do |dir|
+      path = File.join(dir, 'upload.jks')
+      env = { 'SHIP_KS_PASS' => password }
+      capture!(keytool, '-J-Duser.language=en', '-genkeypair', '-keystore', path, '-storetype', 'PKCS12',
+               '-alias', 'upload', '-keyalg', 'RSA', '-keysize', '4096', '-validity', '10000',
+               '-dname', "CN=#{owner}, O=#{owner}", '-storepass:env', 'SHIP_KS_PASS',
+               '-keypass:env', 'SHIP_KS_PASS', env: env)
+      out = capture!(keytool, '-J-Duser.language=en', '-list', '-v', '-keystore', path,
+                     '-alias', 'upload', '-storepass:env', 'SHIP_KS_PASS', env: env)
+      data = { 'alias' => 'upload', 'password' => password, 'key_password' => password,
+               'sha256' => sha256_in(out), 'created_at' => Time.now.utc.iso8601 }
+      save_keystore!(File.binread(path), data, 'Create upload key')
+    end
+  end
+
+  def import_keystore!(path, key_alias)
+    UI.user_error!("The vault already has an upload key for #{package}.") if keystore?
+    UI.user_error!("No file at #{path}") unless File.file?(path)
+    store_pass = UI.password('Keystore password:')
+    env = { 'SHIP_KS_PASS' => store_pass }
+    listing = capture!(keytool, '-J-Duser.language=en', '-list', '-keystore', path,
+                       '-storepass:env', 'SHIP_KS_PASS', env: env)
+    aliases = listing.scan(/^([^,\n]+),.*(?:PrivateKeyEntry|keyEntry)/i).flatten.map(&:strip)
+    key_alias ||= aliases.size == 1 ? aliases.first : UI.select('Which key is the upload key?', aliases)
+    key_pass = UI.password('Key password (press Enter if it is the same):')
+    key_pass = store_pass if key_pass.to_s.empty?
+    out = capture!(keytool, '-J-Duser.language=en', '-list', '-v', '-keystore', path, '-alias', key_alias,
+                   '-storepass:env', 'SHIP_KS_PASS', env: env)
+    data = { 'alias' => key_alias, 'password' => store_pass, 'key_password' => key_pass,
+             'sha256' => sha256_in(out), 'created_at' => Time.now.utc.iso8601, 'imported_from' => File.basename(path) }
+    save_keystore!(File.binread(path), data, 'Import upload key')
+  end
+
+  # Yields the environment variables the app's Gradle signing config reads.
+  def with_signing
+    data = signing_data
+    Vault.with_file(Vault.keystore_path(package), 'upload.jks') do |path|
+      yield({
+        'SHIP_KEYSTORE_PATH' => path,
+        'SHIP_KEYSTORE_PASSWORD' => data['password'],
+        'SHIP_KEY_ALIAS' => data['alias'],
+        'SHIP_KEY_PASSWORD' => data['key_password'] || data['password']
+      })
+    end
+  end
+
+  def verify_signature!(aab)
+    actual = sha256_in(capture!(keytool, '-J-Duser.language=en', '-printcert', '-jarfile', aab))
+    expected = signing_data['sha256']
+    return if actual == expected
+    UI.user_error!("#{aab} is signed with #{actual || 'no key'}, not the upload key #{expected}. " \
+                   'Check the SHIP_KEYSTORE_* signing config in android/app/build.gradle(.kts).')
+  end
+
+  # ---------------------------------------------------------------- Google Play
+
+  # Service account JSON from SHIP_PLAY_JSON (CI) or the vault.
+  def with_play_key(&block)
+    return yield(ENV['SHIP_PLAY_JSON']) if ENV['SHIP_PLAY_JSON'].to_s != ''
+    name = play['service_account']
+    rel = Vault.play_key_path(name)
+    unless Vault.exist?(rel)
+      UI.user_error!("The vault has no Play service account '#{name}'. " \
+                     'Add it with `bundle exec fastlane vault_add_play_key path:/path/to/key.json`.')
+    end
+    Vault.with_file(rel, 'play.json', &block)
+  end
+
+  def play_client(json_key)
+    require 'supply'
+    Supply.config = FastlaneCore::Configuration.create(
+      Supply::Options.available_options, { package_name: package, json_key: json_key }
+    )
+    Supply::Client.make_from_config
+  end
+
+  # Opens an edit, yields the client, always discards the edit unless the block committed it.
+  def with_edit(json_key)
+    client = play_client(json_key)
+    client.begin_edit(package_name: package)
+    yield client
+  ensure
+    begin
+      client&.abort_current_edit if client&.current_edit
+    rescue StandardError
+      nil
+    end
+  end
+
+  def app_missing_error?(error)
+    error.message =~ /package not found|applicationNotFound|not found: #{Regexp.escape(package)}/i
+  end
+
+  # Every version code Play has seen for this app, or nil when Play does not know the app yet.
+  def play_version_codes(json_key)
+    with_edit(json_key) do |client|
+      codes = client.aab_version_codes + client.apks_version_codes
+      client.tracks.each do |track|
+        (track.releases || []).each { |release| codes.concat(release.version_codes || []) }
+      end
+      codes.map(&:to_i)
+    end
+  rescue StandardError => e
+    return nil if app_missing_error?(e)
+    raise
+  end
+
+  # [version_code, known_to_play]
+  def next_version_code(json_key)
+    _, pubspec_build = pubspec_version
+    codes = play_version_codes(json_key)
+    return [[pubspec_build, 1].max, false] if codes.nil?
+    [[(codes.max || 0) + 1, pubspec_build].max, true]
+  end
+
+  def track_releases(json_key)
+    with_edit(json_key) do |client|
+      client.tracks.flat_map do |track|
+        (track.releases || []).map do |r|
+          { track: track.track, name: r.name, status: r.status, codes: (r.version_codes || []).map(&:to_i),
+            fraction: r.user_fraction }
+        end
+      end
+    end
+  end
+
+  def latest_code_on(json_key, track)
+    track_releases(json_key).select { |r| r[:track] == track }.flat_map { |r| r[:codes] }.max
+  end
+
+  # Contact details live outside the listing, so supply does not send them.
+  def update_details(json_key)
+    contact = app['contact'] || {}
+    return if contact.compact.empty?
+    with_edit(json_key) do |client|
+      details = Google::Apis::AndroidpublisherV3::AppDetails.new(
+        contact_email: contact['email'], contact_website: contact['website'], contact_phone: contact['phone'],
+        default_language: app['default_locale']
+      )
+      client.client.update_edit_detail(package, client.current_edit.id, details)
+      client.commit_current_edit!
+    end
+    UI.success('Contact details updated')
+  end
+
+  # ---------------------------------------------------------------- build
+
+  def build_aab(name, code)
+    args = (app.dig('android', 'build_args') || []).join(' ')
+    with_signing do |env|
+      with_env(env) do
+        Dir.chdir(root) do
+          Fastlane::Actions.sh("flutter build appbundle --release --build-name=#{name} --build-number=#{code} #{args}".strip)
+        end
+      end
+    end
+    aab = File.join(root, 'build', 'app', 'outputs', 'bundle', 'release', 'app-release.aab')
+    UI.user_error!("No bundle at #{aab}") unless File.exist?(aab)
+    verify_signature!(aab)
+    aab
+  end
+
+  def tag!(name, code)
+    tag = "android/#{name}+#{code}"
+    _, status = Open3.capture2e('git', '-C', root, 'tag', '-a', tag, '-m', "Google Play #{name} (#{code})")
+    return UI.important("Could not create git tag #{tag}") unless status.success?
+    _, status = Open3.capture2e('git', '-C', root, 'push', '--quiet', 'origin', tag)
+    UI.important("Tag #{tag} created but not pushed") unless status.success?
+  end
+
+  def first_upload_help(aab, name, code)
+    UI.important('Google Play does not know this app yet. Google only lets the API manage an app after one bundle')
+    UI.important('went up through Play Console. One-time steps:')
+    UI.message("  1. Play Console > Create app (if not done): name '#{app['app_name']}', default language #{app['default_locale'] || locales.first}.")
+    UI.message('  2. Test and release > Testing > Internal testing > Create new release.')
+    UI.message('     Keep "Use Google-generated key" for Play App Signing.')
+    UI.message("  3. Upload #{aab}")
+    UI.message("     (package #{package}, version #{name}, code #{code}). Save; no need to roll it out.")
+    UI.message('  4. Run the release lane again: from then on everything goes through the API.')
+  end
+
+  # ---------------------------------------------------------------- preflight
+
+  def png_size(path)
+    head = File.binread(path, 24)
+    return nil unless head && head.bytesize == 24 && head[0, 8] == "\x89PNG\r\n\x1A\n".b
+    head[16, 8].unpack('NN')
+  end
+
+  def text_length(path)
+    File.exist?(path) ? File.read(path, encoding: 'UTF-8').strip.length : 0
+  end
+
+  # [errors, warnings] for things Google Play would reject.
+  def preflight
+    errors = []
+    warnings = []
+    gradle = %w[build.gradle.kts build.gradle].map { |f| File.join(root, 'android', 'app', f) }.find { |f| File.exist?(f) }
+    if gradle
+      src = File.read(gradle)
+      app_id = src[/applicationId\s*=?\s*["']([^"']+)["']/, 1]
+      errors << "applicationId is #{app_id}, ship.yml says #{package}" if app_id && app_id != package
+      errors << "#{File.basename(gradle)} has no SHIP_KEYSTORE_PATH signing config (see templates/android)" unless src.include?('SHIP_KEYSTORE_PATH')
+    else
+      errors << 'android/app/build.gradle(.kts) not found'
+    end
+    warnings << 'ship.yml has no privacy_url (Play requires one for most apps)' if app['privacy_url'].to_s.empty?
+
+    locales.each do |locale|
+      dir = File.join(metadata_dir, locale)
+      unless Dir.exist?(dir)
+        errors << "#{locale}: no metadata folder"
+        next
+      end
+      { 'title.txt' => TITLE_MAX, 'short_description.txt' => SHORT_MAX, 'full_description.txt' => FULL_MAX }.each do |file, max|
+        len = text_length(File.join(dir, file))
+        errors << "#{locale}/#{file}: empty" if len.zero?
+        errors << "#{locale}/#{file}: #{len} characters, Play allows #{max}" if len > max
+      end
+      Dir.glob(File.join(dir, 'changelogs', '*.txt')).each do |f|
+        len = text_length(f)
+        errors << "#{locale}/changelogs/#{File.basename(f)}: #{len} characters, Play allows #{CHANGELOG_MAX}" if len > CHANGELOG_MAX
+      end
+      images = File.join(dir, 'images')
+      { 'icon.png' => [512, 512], 'featureGraphic.png' => [1024, 500] }.each do |file, size|
+        path = File.join(images, file)
+        if !File.exist?(path)
+          (locale == locales.first ? errors : warnings) << "#{locale}/images/#{file}: missing"
+        elsif png_size(path) != size
+          errors << "#{locale}/images/#{file}: #{png_size(path)&.join('x')}, Play needs #{size.join('x')}"
+        end
+      end
+      SCREENSHOT_DIRS.each do |kind|
+        shots = Dir.glob(File.join(images, kind, '*.{png,jpg,jpeg}'))
+        if kind == 'phoneScreenshots' && shots.size < 2
+          errors << "#{locale}/images/#{kind}: #{shots.size} screenshots, Play needs at least 2"
+        end
+        errors << "#{locale}/images/#{kind}: #{shots.size} screenshots, Play allows 8" if shots.size > 8
+        shots.each do |shot|
+          w, h = png_size(shot)
+          next unless w
+          short, long = [w, h].minmax
+          if short < 320 || long > 3840 || long > short * 2
+            errors << "#{locale}/images/#{kind}/#{File.basename(shot)}: #{w}x#{h} is outside Play's limits"
+          end
+        end
+      end
+    end
+    [errors, warnings]
+  end
+
+  def preflight!(metadata: true)
+    errors, warnings = preflight
+    errors = errors.reject { |e| e.include?('/') } unless metadata
+    warnings.each { |w| UI.important(w) }
+    errors.each { |e| UI.error(e) }
+    UI.user_error!("Preflight found #{errors.size} problem(s)") unless errors.empty?
+    UI.success('Preflight passed')
+  end
+end
+
+# ------------------------------------------------------------------ lanes
+
+desc 'Add a Google Play service account key to the vault (name: defaults to "default")'
+lane :vault_add_play_key do |options|
+  path = options[:path] || UI.user_error!('Pass path:/path/to/service-account.json')
+  json = File.read(path)
+  UI.user_error!("#{path} is not a service account key") unless JSON.parse(json)['type'] == 'service_account'
+  name = options[:name] || 'default'
+  Ship::Vault.sync!
+  Ship::Vault.write(Ship::Vault.play_key_path(name), json)
+  Ship::Vault.publish!("Add Play service account #{name}")
+  UI.success("Stored as google-play/#{name}. The original file can be deleted.")
+end
+
+desc 'List what the vault holds (no secrets are printed)'
+lane :vault_list do
+  Ship::Vault.sync!
+  Dir.glob(File.join(Ship::VAULT_DIR, 'android', '*', 'info.yml')).sort.each do |f|
+    info = YAML.safe_load(File.read(f))
+    UI.message("upload key  #{info['package_name']}  #{info['sha256']}  (#{info['created_at']}, #{info['created_on']})")
+  end
+  Dir.glob(File.join(Ship::VAULT_DIR, 'google-play', '*.json.enc')).sort.each do |f|
+    UI.message("play key    #{File.basename(f, '.json.enc')}")
+  end
+end
+
+platform :android do
+  desc 'Build a signed bundle with the next free version code and upload it to Play (draft by default)'
+  desc 'Options: track:internal|alpha|beta|production  status:draft|completed  metadata:true (also send listing + images)'
+  lane :release do |options|
+    Ship.preflight!(metadata: options[:metadata] == true)
+    Ship::Vault.sync!
+    Ship.require_keystore!
+    Ship.with_play_key do |json_key|
+      name, = Ship.pubspec_version
+      code, on_play = Ship.next_version_code(json_key)
+      UI.message("Version #{name} (#{code})")
+      aab = Ship.build_aab(name, code)
+      unless on_play
+        Ship.first_upload_help(aab, name, code)
+        next
+      end
+      metadata = options[:metadata] == true
+      track = (options[:track] || Ship.play['track']).to_s
+      status = (options[:status] || Ship.play['release_status']).to_s
+      upload_to_play_store(
+        package_name: Ship.package,
+        json_key: json_key,
+        aab: aab,
+        track: track,
+        release_status: status,
+        version_name: "#{name} (#{code})",
+        metadata_path: Ship.metadata_dir,
+        skip_upload_apk: true,
+        skip_upload_metadata: !metadata,
+        skip_upload_images: !metadata,
+        skip_upload_screenshots: !metadata,
+        sync_image_upload: true
+      )
+      Ship.tag!(name, code)
+      UI.success("#{name} (#{code}) is on the #{track} track as #{status}.")
+    end
+  end
+
+  desc 'Build the signed bundle only (no upload). Handy for the first manual Play Console upload'
+  lane :build do
+    Ship.preflight!(metadata: false)
+    Ship::Vault.sync!
+    Ship.require_keystore!
+    Ship.with_play_key do |json_key|
+      name, = Ship.pubspec_version
+      code, = Ship.next_version_code(json_key)
+      UI.success("Built #{Ship.build_aab(name, code)} (#{name}, #{code})")
+    end
+  end
+
+  desc 'Move a release between tracks. Defaults: from the configured track to production, as a draft'
+  desc 'Options: from: to: status:draft|completed|inProgress rollout:0.1 version_code:'
+  lane :promote do |options|
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      from = (options[:from] || Ship.play['track']).to_s
+      to = (options[:to] || 'production').to_s
+      status = (options[:status] || (options[:rollout] ? 'inProgress' : 'draft')).to_s
+      code = options[:version_code]&.to_i || Ship.latest_code_on(json_key, from) ||
+             UI.user_error!("Nothing on the #{from} track to promote")
+      params = {
+        package_name: Ship.package,
+        json_key: json_key,
+        track: from,
+        track_promote_to: to,
+        track_promote_release_status: status,
+        release_status: status,
+        version_code: code,
+        skip_upload_apk: true,
+        skip_upload_aab: true,
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true,
+        skip_upload_changelogs: true
+      }
+      params[:rollout] = options[:rollout].to_s if options[:rollout]
+      upload_to_play_store(params)
+      UI.success("Version code #{code} promoted from #{from} to #{to} as #{status}.")
+    end
+  end
+
+  desc 'Send the store listing (text, icon, feature graphic, screenshots) and contact details'
+  lane :metadata do
+    Ship.preflight!
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      upload_to_play_store(
+        package_name: Ship.package,
+        json_key: json_key,
+        metadata_path: Ship.metadata_dir,
+        skip_upload_apk: true,
+        skip_upload_aab: true,
+        skip_upload_changelogs: true,
+        sync_image_upload: true
+      )
+      Ship.update_details(json_key)
+    end
+  end
+
+  desc 'Show what is on each Play track'
+  lane :status do
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      releases = Ship.track_releases(json_key)
+      UI.message('No releases yet') if releases.empty?
+      releases.each do |r|
+        fraction = r[:fraction] ? " #{(r[:fraction] * 100).round}%" : ''
+        UI.message("#{r[:track].ljust(12)} #{r[:status]}#{fraction}  #{r[:name]}  codes #{r[:codes].join(',')}")
+      end
+    end
+  end
+
+  desc 'Print the version name and the next free version code'
+  lane :version do
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      name, = Ship.pubspec_version
+      code, on_play = Ship.next_version_code(json_key)
+      UI.message("#{name} (#{code})#{on_play ? '' : ' - app not on Play yet'}")
+    end
+  end
+
+  desc 'Create the upload key in the vault, or import an existing one: keystore import:path/to/key.jks alias:upload'
+  lane :keystore do |options|
+    Ship::Vault.sync!
+    if options[:import]
+      Ship.import_keystore!(File.expand_path(options[:import].to_s, Ship.root), options[:alias])
+    elsif !Ship.keystore?
+      Ship.create_keystore!
+    end
+    UI.success("Upload key for #{Ship.package}: SHA-256 #{Ship.signing_data['sha256']}")
+  end
+
+  desc 'Check metadata, images and signing config against Play rules (offline)'
+  lane :preflight do
+    Ship.preflight!
+  end
+
+  desc 'Check this machine and the Play connection'
+  lane :doctor do
+    UI.message("keytool: #{Ship.keytool}")
+    UI.message(Ship.capture!(Ship::WINDOWS ? 'flutter.bat' : 'flutter', '--version').lines.first.strip)
+    Ship::Vault.sync!
+    UI.success("Vault OK (#{Ship::VAULT_DIR})")
+    UI.message(Ship.keystore? ? "Upload key: #{Ship.signing_data['sha256']}" : 'Upload key: none yet (run the keystore lane)')
+    Ship.with_play_key do |json_key|
+      codes = Ship.play_version_codes(json_key)
+      if codes.nil?
+        UI.important("Play does not know #{Ship.package} yet: the first bundle must be uploaded in Play Console")
+      else
+        UI.success("Play access OK, highest version code #{codes.max || 'none'}")
+      end
+    end
+    errors, warnings = Ship.preflight
+    (warnings + errors).each { |line| UI.important(line) }
+  end
+end

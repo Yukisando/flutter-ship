@@ -1,0 +1,15 @@
+# Release lanes are shared by every app and live in github.com/Yukisando/flutter-ship.
+# Set SHIP_LOCAL to a local checkout of that repo to try changes before pushing them.
+#
+#   bundle exec fastlane android release      build + upload a draft to the configured track
+#   bundle exec fastlane android promote      draft on production from the latest test build
+#   bundle exec fastlane android metadata     store listing, screenshots, contact details
+#   bundle exec fastlane android status       what is on each track
+#   bundle exec fastlane android doctor       check this machine
+default_platform(:android)
+
+if ENV['SHIP_LOCAL'].to_s.empty?
+  import_from_git(url: 'https://github.com/Yukisando/flutter-ship.git', branch: 'main', path: 'fastlane/Fastfile')
+else
+  import(File.join(ENV['SHIP_LOCAL'], 'fastlane', 'Fastfile'))
+end
