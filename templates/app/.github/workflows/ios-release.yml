@@ -67,10 +67,6 @@ jobs:
           ruby-version: '3.3'
           bundler-cache: true
 
-      # flutter runs `pod` with this Ruby, not the system one the runner's CocoaPods belongs to.
-      - name: CocoaPods
-        run: gem install cocoapods --no-document
-
       - name: fastlane ios ${{ inputs.lane }}
         run: bundle exec fastlane ios ${{ inputs.lane }}
         env:
