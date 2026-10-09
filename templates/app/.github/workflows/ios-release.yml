@@ -24,10 +24,15 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # App Store Connect only takes builds from the current Xcode (iOS 26 SDK since 2026).
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       - name: Checkout flutter-ship lanes
         uses: actions/checkout@v4
