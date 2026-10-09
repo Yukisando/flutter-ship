@@ -1,0 +1,82 @@
+# flutter-ship: builds the iOS app on a macOS runner and uploads it to TestFlight.
+# Started by `bundle exec fastlane ios release` on Windows/Linux, or by hand from the Actions tab.
+#
+# Repository secrets (the ship-init skill sets them):
+#   SHIP_VAULT_PASSWORD      vault passphrase
+#   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the ship-vault repo (write: renewing a profile pushes it)
+#   FLUTTER_SHIP_DEPLOY_KEY  SSH deploy key of the flutter-ship repo (read), while that repo is private
+name: iOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: 'release (TestFlight) or build (signed .ipa only)'
+        type: choice
+        options: [release, build]
+        default: release
+
+permissions:
+  contents: write # pushes the ios/<version> tag
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout flutter-ship lanes
+        uses: actions/checkout@v4
+        with:
+          repository: Yukisando/flutter-ship
+          path: .ship/lanes
+          ssh-key: ${{ secrets.FLUTTER_SHIP_DEPLOY_KEY }}
+
+      - name: Checkout the vault
+        uses: actions/checkout@v4
+        with:
+          repository: Yukisando/ship-vault
+          path: .ship/vault
+          ssh-key: ${{ secrets.SHIP_VAULT_DEPLOY_KEY }}
+
+      - name: Machine config
+        run: |
+          mkdir -p ~/.ship
+          ln -s "$GITHUB_WORKSPACE/.ship/vault" ~/.ship/vault
+          cp .ship/vault/config.yml ~/.ship/config.yml
+          git config --global user.name "flutter-ship CI"
+          git config --global user.email "ci@users.noreply.github.com"
+
+      - name: Flutter version from the repo
+        id: flutter
+        run: echo "version=$(cat .flutter-version 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: fastlane ios ${{ inputs.lane }}
+        run: bundle exec fastlane ios ${{ inputs.lane }}
+        env:
+          SHIP_LOCAL: ${{ github.workspace }}/.ship/lanes
+          SHIP_VAULT_PASSWORD: ${{ secrets.SHIP_VAULT_PASSWORD }}
+
+      - name: Keep the .ipa
+        if: inputs.lane == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: build/ios/ipa/*.ipa
+          retention-days: 7
