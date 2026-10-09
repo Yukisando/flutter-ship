@@ -46,7 +46,11 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
 - iPhone only unless the app is designed for iPad: `TARGETED_DEVICE_FAMILY = 1` in the Runner target. A build that
   also targets iPad makes 13" iPad screenshots mandatory at submission.
 - Submitting stays manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
-  console steps in the app's `fastlane/STORE_SETUP_IOS.md`.
+  console steps in the app's `fastlane/STORE_SETUP_IOS.md`, click by click with the exact values to type:
+  APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), App Privacy (every data
+  type with purpose / linked / tracking, derived from the Play data safety answers), Content Rights, then the version:
+  pick the build, "Sign-in required" (No when a guest mode exists, else a demo account kept out of git), manual
+  release, Add for Review. Keep the Play guide (`fastlane/STORE_SETUP.md`) in the same style and tick what is done.
 
 ## Errors
 
