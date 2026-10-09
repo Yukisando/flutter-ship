@@ -66,7 +66,9 @@ For tablet screenshots (optional on Play, needed for the App Store iPad), boot a
 
 ```
 $SHOTS frame                # Play: metadata/android/<locale>/images/phoneScreenshots (1080x1920, max 8)
-$SHOTS frame --store ios    # App Store: fastlane/screenshots/<locale> (6.9" iPhone, 13" iPad)
+$SHOTS frame --store ios    # App Store: fastlane/screenshots/<locale> (6.9" iPhone, 13" iPad if tablet raws exist)
+                            # Android phone raws work for the iPhone set: the status bar is cropped and the
+                            # device frame is neutral. Check no Android-only UI (back arrow bar, Android dialogs) shows.
 $SHOTS graphics             # icon.png 512x512 and featureGraphic.png 1024x500 per locale
 ```
 

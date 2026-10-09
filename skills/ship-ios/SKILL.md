@@ -37,6 +37,17 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
      `gh repo deploy-key add ... --allow-write`, private half as the secret, then the local files deleted.
 6. `$FL ios build` checks signing on the runner without uploading (the .ipa is kept as an artifact).
 
+## Listing and submission
+
+- `$FL ios metadata` sends the App Store listing (see ship-listing) and screenshots; `$FL ios status` shows the app,
+  its versions and the latest builds with their processing state.
+- App Store screenshots: Android raw captures re-framed with `shots.py frame --store ios` are fine (crop the status bar;
+  no Android system UI visible).
+- iPhone only unless the app is designed for iPad: `TARGETED_DEVICE_FAMILY = 1` in the Runner target. A build that
+  also targets iPad makes 13" iPad screenshots mandatory at submission.
+- Submitting stays manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
+  console steps in the app's `fastlane/STORE_SETUP_IOS.md`.
+
 ## Errors
 
 - **Invalid large app icon ... alpha channel**: flatten the AppIcon PNGs (no transparency).
