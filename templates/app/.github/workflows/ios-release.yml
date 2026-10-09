@@ -4,7 +4,6 @@
 # Repository secrets (the ship-init skill sets them):
 #   SHIP_VAULT_PASSWORD      vault passphrase
 #   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the ship-vault repo (write: renewing a profile pushes it)
-#   FLUTTER_SHIP_DEPLOY_KEY  SSH deploy key of the flutter-ship repo (read), while that repo is private
 name: iOS release
 
 on:
@@ -35,7 +34,6 @@ jobs:
         with:
           repository: Yukisando/flutter-ship
           path: .ship/lanes
-          ssh-key: ${{ secrets.FLUTTER_SHIP_DEPLOY_KEY }}
 
       - name: Checkout the vault
         uses: actions/checkout@v4

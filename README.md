@@ -1,6 +1,6 @@
 # flutter-ship
 
-Ship Flutter apps to Google Play (App Store next) with fastlane and Claude Code.
+Ship Flutter apps to Google Play and the App Store (TestFlight) with fastlane and Claude Code.
 
 - **Shared lanes**: each app's `fastlane/Fastfile` imports `fastlane/Fastfile` from this repo, so a fix here reaches every app.
 - **Key vault**: upload keystores and Play service account keys are AES-256-GCM encrypted in a private git repo (`ship-vault`). Every machine builds with the same key. You keep one passphrase in your password manager.
