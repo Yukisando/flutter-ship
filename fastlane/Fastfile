@@ -812,6 +812,58 @@ module Ship
     UI.important("Tag #{tag} created but not pushed") unless status.success?
   end
 
+  # ---------------------------------------------------------------- App Store listing
+  #
+  # fastlane/metadata/ios (deliver layout):
+  #   <locale>/name.txt subtitle.txt description.txt keywords.txt promotional_text.txt
+  #            support_url.txt marketing_url.txt privacy_url.txt [release_notes.txt]
+  #   copyright.txt primary_category.txt [secondary_category.txt]
+  #   review_information/{first_name,last_name,phone_number,email_address,notes}.txt
+  #     (+ demo_user.txt / demo_password.txt, gitignored, only if the app needs a login)
+  #   age_rating.json   App Store Connect ageRatingDeclaration attributes
+  # fastlane/screenshots/<locale>/*.png   (shots.py frame --store ios)
+
+  IOS_LIMITS = { 'name.txt' => 30, 'subtitle.txt' => 30, 'keywords.txt' => 100,
+                 'promotional_text.txt' => 170, 'description.txt' => 4000, 'release_notes.txt' => 4000 }.freeze
+  IOS_REQUIRED = %w[name.txt description.txt keywords.txt support_url.txt privacy_url.txt].freeze
+  # App Store screenshot sizes it accepts for the required 6.9" / 6.5" iPhone slot.
+  IOS_PHONE_SIZES = [[1320, 2868], [1290, 2796], [1284, 2778], [1242, 2688]].freeze
+
+  def ios_metadata_dir
+    File.join(fastlane_dir, 'metadata', 'ios')
+  end
+
+  def ios_screenshots_dir
+    File.join(fastlane_dir, 'screenshots')
+  end
+
+  def ios_preflight
+    errors = []
+    dir = ios_metadata_dir
+    return ["#{dir} is missing: write the App Store listing (ship-listing skill)"] unless Dir.exist?(dir)
+    locales.each do |loc|
+      IOS_REQUIRED.each do |f|
+        errors << "metadata/ios/#{loc}/#{f} is missing or empty" if text_length(File.join(dir, loc, f)).zero?
+      end
+      IOS_LIMITS.each do |f, max|
+        len = text_length(File.join(dir, loc, f))
+        errors << "metadata/ios/#{loc}/#{f} is #{len} characters (max #{max})" if len > max
+      end
+      kw = File.join(dir, loc, 'keywords.txt')
+      if File.exist?(kw) && File.read(kw, encoding: 'UTF-8').include?(', ')
+        errors << "metadata/ios/#{loc}/keywords.txt: separate keywords with commas only, spaces count against the 100"
+      end
+      shots = Dir.glob(File.join(ios_screenshots_dir, loc, '*.png'))
+      phone = shots.select { |s| IOS_PHONE_SIZES.include?(png_size(s)) }
+      errors << "screenshots/#{loc}: no 6.9\"/6.5\" iPhone screenshot (shots.py frame --store ios)" if phone.empty?
+      errors << "screenshots/#{loc}: #{phone.size} iPhone screenshots (max 10)" if phone.size > 10
+    end
+    %w[copyright.txt primary_category.txt].each do |f|
+      errors << "metadata/ios/#{f} is missing" if text_length(File.join(dir, f)).zero?
+    end
+    errors
+  end
+
   # Off macOS: start the app's workflow, which runs `ios release` on a GitHub macOS runner.
   def dispatch_ios_workflow!(lane)
     workflow = File.join(root, '.github', 'workflows', IOS_WORKFLOW)
@@ -1061,6 +1113,56 @@ platform :ios do
     name, pubspec_number = Ship.pubspec_version
     number = (Ship.asc_app && Ship.next_build_number) || [pubspec_number, 1].max
     UI.success("Built #{Ship.signed_ipa(name, number)}")
+  end
+
+  desc 'Check the App Store listing and screenshots against Apple limits (offline)'
+  lane :preflight do
+    errors = Ship.ios_preflight
+    errors.each { |e| UI.error(e) }
+    UI.user_error!("App Store preflight found #{errors.size} problem(s)") unless errors.empty?
+    UI.success('App Store preflight passed')
+  end
+
+  desc 'Send the App Store listing: text, screenshots, age rating, review contact. No build, no submission'
+  lane :metadata do
+    errors = Ship.ios_preflight
+    errors.each { |e| UI.error(e) }
+    UI.user_error!("App Store preflight found #{errors.size} problem(s)") unless errors.empty?
+    Ship::Vault.sync!
+    next Ship.app_record_help unless Ship.asc_app
+    name, = Ship.pubspec_version
+    rating = File.join(Ship.ios_metadata_dir, 'age_rating.json')
+    upload_to_app_store(
+      api_key: Ship.asc_api_key,
+      app_identifier: Ship.bundle_id,
+      app_version: name,
+      platform: 'ios',
+      skip_binary_upload: true,
+      metadata_path: Ship.ios_metadata_dir,
+      screenshots_path: Ship.ios_screenshots_dir,
+      overwrite_screenshots: true,
+      app_rating_config_path: File.exist?(rating) ? rating : nil,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      ignore_language_directory_validation: true,
+      force: true
+    )
+    UI.success("Listing for #{name} sent. Finish in App Store Connect: App Privacy, price and availability, then pick the build and submit.")
+  end
+
+  desc 'Show the App Store versions and the latest builds'
+  lane :status do
+    Ship::Vault.sync!
+    a = Ship.asc_app
+    next Ship.app_record_help unless a
+    UI.message("#{a.name}  #{a.bundle_id}  SKU #{a.sku}")
+    a.get_app_store_versions(filter: { platform: 'IOS' }).first(5).each do |v|
+      UI.message("version #{v.version_string.ljust(8)} #{v.app_store_state}")
+    end
+    Spaceship::ConnectAPI::Build.all(app_id: a.id, sort: '-uploadedDate', limit: 5).each do |b|
+      UI.message("build   #{b.app_version} (#{b.version})  #{b.processing_state}  #{b.uploaded_date}")
+    end
   end
 
   desc 'Print the version name and the next free build number'
