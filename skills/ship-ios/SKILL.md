@@ -45,7 +45,13 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
   no Android system UI visible).
 - iPhone only unless the app is designed for iPad: `TARGETED_DEVICE_FAMILY = 1` in the Runner target. A build that
   also targets iPad makes 13" iPad screenshots mandatory at submission.
-- Submitting stays manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
+- `$FL ios check` lists what App Store Connect still needs before Add for Review: build picked, copyright, listing
+  and iPhone screenshots per locale, review contact, sign-in, category, age rating, privacy URL, content rights,
+  price, availability. `$FL ios check fix:true` also sets the three the API allows from `ship.yml`
+  (`ios.countries: [FRA]`, first one is the price base, free only; `ios.content_rights: third_party|none`).
+  App Privacy (data types) is not in Apple's API: the user publishes it by hand. Run it before telling the user
+  the app is ready to submit.
+- Picking the build and Add for Review stay manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
   console steps in the app's `fastlane/STORE_SETUP_IOS.md`, click by click with the exact values to type:
   APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), App Privacy (every data
   type with purpose / linked / tracking, derived from the Play data safety answers), Content Rights, then the version:
@@ -58,5 +64,7 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
 - **SDK version issue**: the runner's Xcode is too old for App Store Connect; use a newer `macos-*` image.
 - **CocoaPods is installed but broken**: `cocoapods` missing from the Gemfile (flutter runs `pod` inside `bundle exec`).
 - **No app for <bundle id>**: create it in App Store Connect, then rerun.
+- **`ENTITY_ERROR.RELATIONSHIP.INVALID` on appAvailabilities**: Apple wants every territory in the request
+  (available true or false); `ios check fix:true` already sends them all.
 - **Profile / certificate errors**: rerun `$FL ios setup`; it remakes an expired or revoked certificate or profile and
   pushes it to the vault.

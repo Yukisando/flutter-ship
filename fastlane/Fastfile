@@ -716,6 +716,77 @@ module Ship
     Spaceship::ConnectAPI::App.find(bundle_id)
   end
 
+  # Raw App Store Connect API call, for resources Spaceship does not model (prices, availability...).
+  # Returns the parsed JSON body, or nil on 404 (and on an empty body).
+  def asc_request(klass, path, body = nil)
+    connect_asc!
+    uri = URI("https://api.appstoreconnect.apple.com/#{path}")
+    req = klass.new(uri)
+    req['Authorization'] = "Bearer #{Spaceship::ConnectAPI.token.text}"
+    if body
+      req['Content-Type'] = 'application/json'
+      req.body = JSON.generate(body)
+    end
+    res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
+    return nil if res.code == '404'
+    UI.user_error!("App Store Connect #{path}: HTTP #{res.code} #{res.body.to_s[0, 500]}") unless res.code.start_with?('2')
+    res.body.to_s.empty? ? nil : JSON.parse(res.body)
+  end
+
+  def asc_get(path) = asc_request(Net::HTTP::Get, path)
+  def asc_post(path, body) = asc_request(Net::HTTP::Post, path, body)
+  def asc_patch(path, body) = asc_request(Net::HTTP::Patch, path, body)
+
+  # Content rights, free price and countries from ship.yml (ios.content_rights, ios.countries).
+  # Only free apps: a paid price needs the Paid Apps agreement and a price point choice made by hand.
+  def asc_set_content_rights!(a)
+    value = ios['content_rights'] == 'none' ? 'DOES_NOT_USE_THIRD_PARTY_CONTENT' : 'USES_THIRD_PARTY_CONTENT'
+    asc_patch("v1/apps/#{a.id}", data: { type: 'apps', id: a.id, attributes: { contentRightsDeclaration: value } })
+    UI.success("Content rights set: #{value}")
+  end
+
+  def asc_countries
+    list = Array(ios['countries'])
+    UI.user_error!('Set ios.countries in fastlane/ship.yml (App Store territory codes, e.g. [FRA])') if list.empty?
+    list
+  end
+
+  def asc_set_free_price!(a)
+    base = asc_countries.first
+    free = asc_get("v1/apps/#{a.id}/appPricePoints?filter[territory]=#{base}&limit=200")['data']
+           .find { |p| p['attributes']['customerPrice'].to_f.zero? }
+    UI.user_error!("No free price point for #{base}") unless free
+    asc_post('v1/appPriceSchedules', {
+      data: { type: 'appPriceSchedules', relationships: {
+        app: { data: { type: 'apps', id: a.id } },
+        baseTerritory: { data: { type: 'territories', id: base } },
+        manualPrices: { data: [{ type: 'appPrices', id: '${price}' }] }
+      } },
+      included: [{ type: 'appPrices', id: '${price}', attributes: { startDate: nil },
+                   relationships: { appPricePoint: { data: { type: 'appPricePoints', id: free['id'] } } } }]
+    })
+    UI.success("Price set: free (base #{base})")
+  end
+
+  # Apple wants every territory in the request, available or not.
+  def asc_set_availability!(a)
+    all = asc_get('v1/territories?limit=200')['data'].map { |t| t['id'] }
+    unknown = asc_countries - all
+    UI.user_error!("Unknown App Store territories in ios.countries: #{unknown.join(' ')}") if unknown.any?
+    ids = all.map { |code| "${#{code}}" }
+    asc_post('v2/appAvailabilities', {
+      data: { type: 'appAvailabilities', attributes: { availableInNewTerritories: false }, relationships: {
+        app: { data: { type: 'apps', id: a.id } },
+        territoryAvailabilities: { data: ids.map { |id| { type: 'territoryAvailabilities', id: id } } }
+      } },
+      included: all.zip(ids).map do |code, id|
+        { type: 'territoryAvailabilities', id: id, attributes: { available: asc_countries.include?(code) },
+          relationships: { territory: { data: { type: 'territories', id: code } } } }
+      end
+    })
+    UI.success("Availability set: #{asc_countries.join(' ')} only")
+  end
+
   def app_record_help
     UI.important("App Store Connect has no app for #{bundle_id} yet. Apple does not let the API create it. One-time step:")
     UI.message('  App Store Connect > Apps > + > New App: platform iOS, a name unique on the store,')
@@ -1162,6 +1233,94 @@ platform :ios do
     end
     Spaceship::ConnectAPI::Build.all(app_id: a.id, sort: '-uploadedDate', limit: 5).each do |b|
       UI.message("build   #{b.app_version} (#{b.version})  #{b.processing_state}  #{b.uploaded_date}")
+    end
+  end
+
+  desc 'Check everything App Store Connect needs before Add for Review. fix:true also sets content rights,'
+  desc 'free price and countries (ios.content_rights, ios.countries in ship.yml) when they are missing'
+  lane :check do |options|
+    Ship::Vault.sync!
+    fix = options[:fix].to_s == 'true'
+    a = Ship.asc_app
+    next Ship.app_record_help unless a
+    missing = []
+    check = lambda do |label, ok, detail = nil|
+      line = "#{label}#{detail ? ": #{detail}" : ''}"
+      ok ? UI.success(line) : UI.error(line)
+      missing << label unless ok
+    end
+
+    editable = %w[PREPARE_FOR_SUBMISSION DEVELOPER_REJECTED REJECTED METADATA_REJECTED INVALID_BINARY]
+    v = a.get_app_store_versions(filter: { platform: 'IOS' }).find { |x| editable.include?(x.app_store_state) }
+    next UI.important('No editable App Store version (already in review or released).') unless v
+    UI.message("Version #{v.version_string} (#{v.app_store_state})")
+
+    vattr = Ship.asc_get("v1/appStoreVersions/#{v.id}")['data']['attributes']
+    build = Ship.asc_get("v1/appStoreVersions/#{v.id}/build")&.dig('data')
+    check.call('Build picked for the version', build, build && "#{build['attributes']['version']} (encryption declared: #{build['attributes']['usesNonExemptEncryption'].inspect})")
+    check.call('Copyright', !vattr['copyright'].to_s.empty?, vattr['copyright'])
+    UI.message("  release: #{vattr['releaseType']}")
+
+    Ship.asc_get("v1/appStoreVersions/#{v.id}/appStoreVersionLocalizations")['data'].each do |loc|
+      l = loc['attributes']
+      gaps = %w[description keywords supportUrl].select { |k| l[k].to_s.strip.empty? }
+      check.call("Listing #{l['locale']}", gaps.empty?, gaps.empty? ? nil : "missing #{gaps.join(', ')}")
+      sets = Ship.asc_get("v1/appStoreVersionLocalizations/#{loc['id']}/appScreenshotSets?include=appScreenshots")
+      counts = sets['data'].to_h { |s| [s['attributes']['screenshotDisplayType'], s.dig('relationships', 'appScreenshots', 'data')&.size.to_i] }
+      iphone = counts.select { |t, n| t =~ /APP_IPHONE_(67|65)/ && n.positive? }
+      check.call("Screenshots #{l['locale']}", iphone.any?, counts.map { |t, n| "#{t} #{n}" }.join(', '))
+    end
+
+    review = Ship.asc_get("v1/appStoreVersions/#{v.id}/appStoreReviewDetail")&.dig('data', 'attributes')
+    if review
+      gaps = %w[contactFirstName contactLastName contactEmail contactPhone].select { |k| review[k].to_s.empty? }
+      check.call('Review contact', gaps.empty?, gaps.empty? ? review['contactEmail'] : "missing #{gaps.join(', ')}")
+      demo = review['demoAccountRequired']
+      check.call('Sign-in for review', !demo || !review['demoAccountName'].to_s.empty?,
+                 demo ? "demo account #{review['demoAccountName'].to_s.empty? ? 'required but empty' : 'set'}" : 'not required')
+    else
+      check.call('Review contact', false, 'no App Review information')
+    end
+
+    info = Ship.asc_get("v1/apps/#{a.id}/appInfos")['data'].find { |i| i['attributes']['appStoreState'] != 'READY_FOR_DISTRIBUTION' }
+    if info
+      cat = Ship.asc_get("v1/appInfos/#{info['id']}/primaryCategory")&.dig('data', 'id')
+      check.call('Primary category', cat, cat)
+      check.call('Age rating', Ship.asc_get("v1/appInfos/#{info['id']}/ageRatingDeclaration")&.dig('data'))
+      Ship.asc_get("v1/appInfos/#{info['id']}/appInfoLocalizations")['data'].each do |loc|
+        l = loc['attributes']
+        check.call("Privacy policy URL #{l['locale']}", !l['privacyPolicyUrl'].to_s.empty?, l['privacyPolicyUrl'])
+      end
+    end
+
+    rights = Ship.asc_get("v1/apps/#{a.id}")['data']['attributes']['contentRightsDeclaration']
+    Ship.asc_set_content_rights!(a) if fix && !rights
+    check.call('Content rights', rights || fix, rights || (fix ? 'just set' : nil))
+
+    schedule = Ship.asc_get("v1/apps/#{a.id}/appPriceSchedule")&.dig('data', 'id')
+    prices = schedule && Ship.asc_get("v1/appPriceSchedules/#{schedule}/manualPrices?include=appPricePoint")
+    point = prices&.dig('included')&.find { |x| x['type'] == 'appPricePoints' }
+    if fix && !point
+      Ship.asc_set_free_price!(a)
+      schedule = Ship.asc_get("v1/apps/#{a.id}/appPriceSchedule")&.dig('data', 'id')
+      point = Ship.asc_get("v1/appPriceSchedules/#{schedule}/manualPrices?include=appPricePoint")&.dig('included')&.find { |x| x['type'] == 'appPricePoints' }
+    end
+    check.call('Price', point, point && "#{point['attributes']['customerPrice']} (base #{Ship.asc_get("v1/appPriceSchedules/#{schedule}/baseTerritory")&.dig('data', 'id')})")
+
+    avail = Ship.asc_get("v1/apps/#{a.id}/appAvailabilityV2")&.dig('data', 'id')
+    if fix && !avail
+      Ship.asc_set_availability!(a)
+      avail = Ship.asc_get("v1/apps/#{a.id}/appAvailabilityV2")&.dig('data', 'id')
+    end
+    territories = avail ? Ship.asc_get("v2/appAvailabilities/#{avail}/territoryAvailabilities?limit=200&include=territory")['data'] : []
+    on = territories.select { |t| t['attributes']['available'] }.map { |t| t['relationships']&.dig('territory', 'data', 'id') || t['id'] }
+    check.call('Availability', on.any?, on.any? ? "#{on.size} territor#{on.size == 1 ? 'y' : 'ies'} #{on.first(10).join(' ')}" : 'not set')
+
+    UI.important('App Privacy (data types) is not readable through the API: check App Store Connect > App Privacy shows "Published".')
+    if missing.empty?
+      UI.success('Ready for Add for Review (once App Privacy is published).')
+    else
+      UI.user_error!("#{missing.size} item(s) missing: #{missing.join(', ')}")
     end
   end
 
