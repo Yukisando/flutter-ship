@@ -27,6 +27,7 @@ A build takes several minutes. Run it in the background and wait.
 | User asks | Command |
 |---|---|
 | What is live / what is on Play | `$FL android status` |
+| Is the app ready for production / review | `$FL android check` (validates a production release of the latest test build, changes nothing) |
 | Promote to production (draft, the user finishes in the console) | `$FL android promote` |
 | Promote and send for review now | `$FL android promote status:completed` (confirm with the user first) |
 | Staged rollout | `$FL android promote rollout:0.1` (confirm first) |
@@ -43,4 +44,6 @@ A promotion with `status:completed` or a `rollout` reaches real users after Goog
 - **Signed with ... not the upload key**: the Gradle signing patch is missing or wrong. See `$PLUGIN/templates/android/`.
 - **Upload key mismatch on Play** ("signed with the wrong key"): the vault key is not the one Play registered. Compare `$FL vault_list` with Play Console > App integrity > Upload key certificate. Import the right key, or request an upload key reset there.
 - **Only releases with status draft may be created on draft app**: the app was never published. Keep `draft` and roll out from the console.
+  The first production release is always a draft (`android promote`), sent for review from Publishing overview, which
+  also lists any App content form still missing; the API cannot read those forms. `android check` says which case applies.
 - **The caller does not have permission**: the service account lacks access to this app in Play Console > Users and permissions.

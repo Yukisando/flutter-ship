@@ -1028,6 +1028,40 @@ platform :android do
     UI.success("Built #{Ship.build_aab(name, code)} (#{name}, #{code})")
   end
 
+  # Play's API cannot read the App content forms, but edits.validate refuses a release the console would refuse.
+  desc 'Check, without changing anything, that Play would take a production release of the latest test build'
+  desc 'Options: from: (default: the configured track) version_code:'
+  lane :check do |options|
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      from = (options[:from] || Ship.play['track']).to_s
+      code = options[:version_code]&.to_i || Ship.latest_code_on(json_key, from) ||
+             UI.user_error!("Nothing on the #{from} track to check")
+      validate = lambda do |status|
+        Ship.with_edit(json_key) do |client|
+          release = AndroidPublisher::TrackRelease.new(status: status, version_codes: [code.to_s])
+          client.update_track('production', AndroidPublisher::Track.new(track: 'production', releases: [release]))
+          client.validate_current_edit!
+        end
+        nil
+      rescue StandardError => e
+        e.message
+      end
+      error = validate.call('completed')
+      if error.nil?
+        UI.success("Play would take #{code} on production and send it for review: `android promote status:completed`.")
+      elsif error =~ /draft app/i
+        UI.important('The app has never been published: Play only takes a production draft.')
+        draft_error = validate.call('draft')
+        UI.user_error!("Production draft of #{code} refused: #{draft_error}") if draft_error
+        UI.success("Production draft of #{code} accepted. Next: `android promote`, then Play Console > " \
+                   'Publishing overview > Send for review (the console lists any form still missing).')
+      else
+        UI.user_error!("Production release of #{code} refused: #{error}")
+      end
+    end
+  end
+
   desc 'Move a release between tracks. Defaults: from the configured track to production, as a draft'
   desc 'Options: from: to: status:draft|completed|inProgress rollout:0.1 version_code:'
   lane :promote do |options|
