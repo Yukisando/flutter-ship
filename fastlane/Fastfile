@@ -1237,7 +1237,7 @@ platform :ios do
   end
 
   desc 'Check everything App Store Connect needs before Add for Review. fix:true also sets content rights,'
-  desc 'free price and countries (ios.content_rights, ios.countries in ship.yml) when they are missing'
+  desc 'free price and countries (ios.content_rights, ios.countries in ship.yml) when they are missing. build:N picks that build'
   lane :check do |options|
     Ship::Vault.sync!
     fix = options[:fix].to_s == 'true'
@@ -1256,6 +1256,13 @@ platform :ios do
     UI.message("Version #{v.version_string} (#{v.app_store_state})")
 
     vattr = Ship.asc_get("v1/appStoreVersions/#{v.id}")['data']['attributes']
+    if options[:build]
+      pick = Spaceship::ConnectAPI::Build.all(app_id: a.id, version: v.version_string, build_number: options[:build].to_s).first
+      UI.user_error!("No build #{v.version_string} (#{options[:build]}) in App Store Connect yet") unless pick
+      UI.user_error!("Build #{options[:build]} is #{pick.processing_state}, wait until Apple has processed it") unless pick.processing_state == 'VALID'
+      v.select_build(build_id: pick.id)
+      UI.success("Build #{options[:build]} picked for #{v.version_string}")
+    end
     build = Ship.asc_get("v1/appStoreVersions/#{v.id}/build")&.dig('data')
     check.call('Build picked for the version', build, build && "#{build['attributes']['version']} (encryption declared: #{build['attributes']['usesNonExemptEncryption'].inspect})")
     check.call('Copyright', !vattr['copyright'].to_s.empty?, vattr['copyright'])
