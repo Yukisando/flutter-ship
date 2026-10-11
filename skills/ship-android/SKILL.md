@@ -12,7 +12,7 @@ If `fastlane/ship.yml` is missing, follow ship-init first.
 ## Default release (no questions needed)
 
 1. `git status`. Uncommitted changes would ship without a matching commit, so commit them or ask the user.
-2. `$FL android version` prints the version name (from pubspec) and the next version code. Play is the source of truth: highest code ever uploaded + 1. Any machine gets the same answer, and nothing needs bumping by hand. Bump the version name in `pubspec.yaml` only when the user asks for it (patch / minor / major), then commit.
+2. `$FL android version` prints the version name (from pubspec) and the next version code. Play is the source of truth: highest code ever uploaded + 1. An app also on the App Store shares the number with iOS: the next number is past the highest either store has seen, so both platforms carry the same number for the same release. Any machine gets the same answer, and nothing needs bumping by hand. Bump the version name in `pubspec.yaml` only when the user asks for it (patch / minor / major), then commit.
 3. Write the release notes `fastlane/metadata/android/<locale>/changelogs/<code>.txt` for every locale (see ship-listing).
 4. `$FL android release`. It runs preflight, pulls the vault, builds with the vault upload key, checks the bundle's signature, uploads to the `play.track` from ship.yml (default `internal`) with status `draft`, and pushes a git tag `android/<name>+<code>`.
    - Add `metadata:true` to also send the listing text and images.

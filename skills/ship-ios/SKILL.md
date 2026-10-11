@@ -12,7 +12,7 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
 ## Default release
 
 1. `git status`: commit first. The runner builds what is pushed, not the working tree.
-2. `$FL ios version` prints the version name (pubspec) and the next build number (App Store Connect + 1).
+2. `$FL ios version` prints the version name (pubspec) and the next build number (App Store Connect + 1, or past Play's highest version code when the app is on both stores, so both platforms carry the same number).
 3. `$FL ios release`. Wait for the run (`gh run watch <id> -R <repo>`, in the background). It builds a signed .ipa,
    uploads it to TestFlight and pushes a tag `ios/<name>+<number>`.
 4. Tell the user: version, build number, and that it appears in TestFlight once Apple has processed it (5-30 min).

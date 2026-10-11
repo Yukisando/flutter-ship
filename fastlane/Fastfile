@@ -417,7 +417,18 @@ module Ship
     _, pubspec_build = pubspec_version
     codes = play_version_codes(json_key)
     return [[pubspec_build, 1].max, false] if codes.nil?
-    [[(codes.max || 0) + 1, pubspec_build].max, true]
+    [[(codes.max || 0) + 1, pubspec_build, shared_floor { asc_next_build }].max, true]
+  end
+
+  # An app on both stores gets one build number for both, so 1.0.0 (8) is the same
+  # build on Play and on the App Store: the next number is past the highest that
+  # either store has seen. Returns 0 when the app is on one store only.
+  def shared_floor
+    return 0 unless app['ios'] && play_key? && Vault.exist?(Vault.asc_key_path(ios['asc_key']))
+    yield || 0
+  rescue StandardError => e
+    UI.important("Could not read the other store's build numbers (#{e.message}): Android and iOS may get different numbers.")
+    0
   end
 
   def track_releases(json_key)
@@ -794,8 +805,14 @@ module Ship
     UI.message('  Then run the lane again.')
   end
 
-  # Highest build number App Store Connect has seen for this app + 1, whatever the version.
+  # Next build number for iOS, shared with Play (shared_floor). nil when App Store Connect has no app yet.
   def next_build_number
+    number = asc_next_build or return nil
+    [number, shared_floor { with_play_key { |json_key| (play_version_codes(json_key)&.max || 0) + 1 } }].max
+  end
+
+  # Highest build number App Store Connect has seen for this app + 1, whatever the version.
+  def asc_next_build
     a = asc_app or return nil
     builds = Spaceship::ConnectAPI::Build.all(app_id: a.id, sort: '-uploadedDate', limit: 50)
     (builds.map { |b| b.version.to_i }.max || 0) + 1
