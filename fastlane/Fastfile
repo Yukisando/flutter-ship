@@ -7,6 +7,8 @@
 #                        upload keystores and Play service account keys, so every machine
 #                        builds with the same keys. Its passphrase lives in ~/.ship/vault.pass
 #                        (or SHIP_VAULT_PASSWORD) and in the owner's password manager.
+#                        An app on a client's store accounts can name its own vault instead
+#                        (`vault:` in ship.yml): ~/.ship/vaults/<name> and <name>.pass.
 #
 # Version codes come from Google Play itself (highest code ever uploaded + 1), so builds made
 # on different machines never collide.
@@ -24,8 +26,6 @@ require 'time'
 module Ship
   HOME = File.join(Dir.home, '.ship')
   CONFIG_FILE = File.join(HOME, 'config.yml')
-  VAULT_DIR = File.join(HOME, 'vault')
-  PASS_FILE = File.join(HOME, 'vault.pass')
   WINDOWS = Gem.win_platform?
 
   # Google Play limits, checked before anything is uploaded.
@@ -137,7 +137,35 @@ module Ship
     def info_path(pkg) = "android/#{pkg}/info.yml"
     def play_key_path(name) = "google-play/#{name}.json.enc"
 
+    # Without `vault:` in ship.yml an app uses the owner's vault (~/.ship/vault). An app on a
+    # client's store accounts names its own, a separate repo under a separate passphrase, so the
+    # client's CI only ever reads that client's keys and ending the work is deleting one repo:
+    #   vault: { name: acme, repo: https://github.com/acme/ship-vault.git }
+    def settings
+      @settings ||= begin
+        v = File.exist?(File.join(Ship.fastlane_dir, 'ship.yml')) ? Ship.app['vault'] : nil
+        UI.user_error!('vault in fastlane/ship.yml needs name: and repo:') unless v.nil? || (v.is_a?(Hash) && v['name'])
+        UI.user_error!('vault.name in fastlane/ship.yml: letters, digits, - and _ only') if v && v['name'].to_s !~ /\A[\w-]+\z/
+        v || {}
+      end
+    end
+
+    def name
+      settings['name']
+    end
+
+    # CI checks the vault out itself and points SHIP_VAULT_DIR at it.
+    def local_dir
+      return ENV['SHIP_VAULT_DIR'] if ENV['SHIP_VAULT_DIR'].to_s != ''
+      name ? File.join(HOME, 'vaults', name) : File.join(HOME, 'vault')
+    end
+
+    def pass_file
+      name ? File.join(HOME, 'vaults', "#{name}.pass") : File.join(HOME, 'vault.pass')
+    end
+
     def repo_url
+      return settings['repo'] || UI.user_error!("Set vault.repo in fastlane/ship.yml for the #{name} vault.") if name
       Ship.machine['vault_repo'] ||
         UI.user_error!("Set vault_repo in #{CONFIG_FILE} (the ship-setup skill does this).")
     end
@@ -145,32 +173,32 @@ module Ship
     def passphrase
       @passphrase ||= begin
         pass = ENV['SHIP_VAULT_PASSWORD'].to_s
-        pass = File.read(PASS_FILE).strip if pass.empty? && File.exist?(PASS_FILE)
+        pass = File.read(pass_file).strip if pass.empty? && File.exist?(pass_file)
         if pass.empty?
-          UI.user_error!("No vault passphrase on this machine. Copy it from your password manager into #{PASS_FILE}.")
+          UI.user_error!("No vault passphrase on this machine. Copy it from your password manager into #{pass_file}.")
         end
         pass
       end
     end
 
     def git(*args, allow_failure: false)
-      out, status = Open3.capture2e('git', '-C', VAULT_DIR, *args)
-      UI.user_error!("git #{args.join(' ')} failed in #{VAULT_DIR}:\n#{out}") unless status.success? || allow_failure
+      out, status = Open3.capture2e('git', '-C', local_dir, *args)
+      UI.user_error!("git #{args.join(' ')} failed in #{local_dir}:\n#{out}") unless status.success? || allow_failure
       [out, status.success?]
     end
 
     # Clones the vault on first use and pulls on every run, so all machines share one set of keys.
     def sync!
       return if @synced
-      if Dir.exist?(File.join(VAULT_DIR, '.git'))
+      if Dir.exist?(File.join(local_dir, '.git'))
         _, has_commits = git('rev-parse', '--verify', 'HEAD', allow_failure: true)
         if has_commits
           _, ok = git('pull', '--rebase', '--quiet', allow_failure: true)
           UI.important('Could not pull the vault (offline?). Using the local copy.') unless ok
         end
       else
-        FileUtils.mkdir_p(HOME)
-        out, status = Open3.capture2e('git', 'clone', '--quiet', repo_url, VAULT_DIR)
+        FileUtils.mkdir_p(File.dirname(local_dir))
+        out, status = Open3.capture2e('git', 'clone', '--quiet', repo_url, local_dir)
         UI.user_error!("Could not clone the vault #{repo_url}:\n#{out}") unless status.success?
       end
       check_passphrase!
@@ -179,12 +207,12 @@ module Ship
 
     # A small known file proves the passphrase before any real secret is touched.
     def check_passphrase!
-      path = File.join(VAULT_DIR, CHECK_FILE)
+      path = File.join(local_dir, CHECK_FILE)
       if File.exist?(path)
         decrypt(File.binread(path))
       else
         File.binwrite(path, encrypt('flutter-ship vault'))
-        attributes = File.join(VAULT_DIR, '.gitattributes')
+        attributes = File.join(local_dir, '.gitattributes')
         File.write(attributes, "*.enc binary
 ") unless File.exist?(attributes)
         publish!('Initialise vault')
@@ -217,27 +245,27 @@ module Ship
       cipher.auth_data = MAGIC
       cipher.update(blob[50..]) + cipher.final
     rescue OpenSSL::Cipher::CipherError
-      UI.user_error!("The vault passphrase in #{PASS_FILE} is wrong, or the file is damaged.")
+      UI.user_error!("The vault passphrase in #{pass_file} is wrong, or the file is damaged.")
     end
 
     def exist?(rel)
-      File.exist?(File.join(VAULT_DIR, rel))
+      File.exist?(File.join(local_dir, rel))
     end
 
     def read(rel)
-      path = File.join(VAULT_DIR, rel)
+      path = File.join(local_dir, rel)
       UI.user_error!("The vault has no #{rel}") unless File.exist?(path)
       decrypt(File.binread(path))
     end
 
     def write(rel, data)
-      path = File.join(VAULT_DIR, rel)
+      path = File.join(local_dir, rel)
       FileUtils.mkdir_p(File.dirname(path))
       File.binwrite(path, encrypt(data))
     end
 
     def write_plain(rel, text)
-      path = File.join(VAULT_DIR, rel)
+      path = File.join(local_dir, rel)
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, text)
     end
@@ -251,7 +279,7 @@ module Ship
       git('commit', '--quiet', '-m', "#{message} (#{Socket.gethostname})")
       out, ok = git('push', '--quiet', '-u', 'origin', 'HEAD', allow_failure: true)
       return if ok
-      UI.user_error!("Saved in #{VAULT_DIR} but not pushed:\n#{out}\nRun `git -C ~/.ship/vault push` once online.")
+      UI.user_error!("Saved in #{local_dir} but not pushed:\n#{out}\nRun `git -C #{local_dir} push` once online.")
     end
 
     # Decrypts a vault file into a private temp dir that is removed after the block.
@@ -281,8 +309,9 @@ module Ship
                    'or import the existing one with `bundle exec fastlane android keystore import:path/to/key.jks`.')
   end
 
+  # Name on new keys and certificates. owner_name in ship.yml wins, for apps on a client's accounts.
   def owner
-    machine['owner_name'] || app['owner_name'] || 'Unknown'
+    app['owner_name'] || machine['owner_name'] || 'Unknown'
   end
 
   def save_keystore!(jks_bytes, data, note)
@@ -679,21 +708,65 @@ module Ship
     connect_asc!
     d = distribution
     return d if d && still_valid?(d['expires']) && Spaceship::ConnectAPI::Certificate.all(filter: { id: d['id'] }).any?
+    if d && d['imported_from']
+      # The team manages its own certificates: replacing one is its call, not a silent new one.
+      UI.user_error!("The imported certificate #{d['name']} has expired or was revoked. " \
+                     'Import its replacement with `ios certificate import:path/to/distribution.p12`.')
+    end
     key = OpenSSL::PKey::RSA.new(2048)
     csr = OpenSSL::X509::Request.new
     csr.version = 0
-    csr.subject = OpenSSL::X509::Name.parse("/CN=#{machine['owner_name'] || 'flutter-ship'}")
+    csr.subject = OpenSSL::X509::Name.parse("/CN=#{owner}")
     csr.public_key = key.public_key
     csr.sign(key, OpenSSL::Digest.new('SHA256'))
-    cert = Spaceship::ConnectAPI::Certificate.create(certificate_type: 'DISTRIBUTION', csr_content: csr.to_pem)
+    cert = begin
+      Spaceship::ConnectAPI::Certificate.create(certificate_type: 'DISTRIBUTION', csr_content: csr.to_pem)
+    rescue StandardError => e
+      raise unless e.message =~ /maximum|already have a current|limit/i
+      UI.user_error!("Apple refused a new distribution certificate for team #{team_id}: #{e.message}\n" \
+                     'The team is at its limit. Ask its admin to export one it already uses (.p12 from Keychain Access) ' \
+                     'and run `ios certificate import:path/to/distribution.p12`.')
+    end
     x509 = OpenSSL::X509::Certificate.new(Base64.decode64(cert.certificate_content))
-    d = { 'id' => cert.id, 'name' => x509.subject.to_a.find { |e| e[0] == 'CN' }&.at(1),
-          'key_pem' => key.to_pem, 'cert_der' => Base64.strict_encode64(x509.to_der),
-          'expires' => x509.not_after.utc.iso8601, 'created_on' => Socket.gethostname }
+    save_distribution!({ 'id' => cert.id, 'key_pem' => key.to_pem }, x509, 'Created')
+  end
+
+  # A team that already uses its distribution certificates (often a client's, at Apple's limit)
+  # shares one with the vault instead: the .p12 its admin exports from Keychain Access.
+  def import_distribution!(path)
+    UI.user_error!("No file at #{path}") unless File.file?(path)
+    connect_asc!
+    p12 = begin
+      OpenSSL::PKCS12.new(File.binread(path), UI.password('Password of the .p12:'))
+    rescue OpenSSL::PKCS12::PKCS12Error => e
+      UI.user_error!("Could not open #{path}: #{e.message}. Either the password is wrong, or it is an old Keychain " \
+                     'export (RC2) that OpenSSL 3 refuses: re-export it from a recent macOS, or convert it with `openssl pkcs12 -legacy`.')
+    end
+    x509 = p12.certificate
+    UI.user_error!("#{path} holds a certificate without its private key") unless p12.key && x509.check_private_key(p12.key)
+    team = x509.subject.to_a.find { |e| e[0] == 'OU' }&.at(1)
+    UI.user_error!("This certificate belongs to team #{team}, ship.yml says #{team_id}") unless team == team_id
+    UI.user_error!("This certificate expires #{x509.not_after.utc.strftime('%F')}: import a newer one") unless still_valid?(x509.not_after.utc.iso8601)
+    live = Spaceship::ConnectAPI::Certificate.all(filter: { certificateType: 'DISTRIBUTION,IOS_DISTRIBUTION' })
+                                             .find { |c| Base64.decode64(c.certificate_content.to_s) == x509.to_der }
+    UI.user_error!("App Store Connect does not list this certificate for team #{team_id}: it was revoked") unless live
+    save_distribution!({ 'id' => live.id, 'key_pem' => p12.key.to_pem, 'imported_from' => File.basename(path) }, x509, 'Imported')
+  end
+
+  def save_distribution!(d, x509, verb)
+    d = d.merge('name' => x509.subject.to_a.find { |e| e[0] == 'CN' }&.at(1),
+                'cert_der' => Base64.strict_encode64(x509.to_der),
+                'expires' => x509.not_after.utc.iso8601, 'created_on' => Socket.gethostname)
     Vault.write(Vault.distribution_path(team_id), JSON.generate(d))
     Vault.publish!("Apple Distribution certificate for #{team_id}")
-    UI.success("Created certificate #{d['name']} (expires #{d['expires'][0, 10]})")
+    UI.success("#{verb} certificate #{d['name']} (expires #{d['expires'][0, 10]})")
     d
+  end
+
+  # Keychain identity of the vault certificate: "Apple Distribution", or "iPhone Distribution"
+  # for an older iOS Distribution certificate imported from a team.
+  def signing_identity(dist)
+    dist['name'].to_s[/\A(?:Apple|iPhone|iOS) Distribution/] || 'Apple Distribution'
   end
 
   def profile
@@ -849,7 +922,7 @@ module Ship
     end
   end
 
-  def build_ipa(name, number, prof)
+  def build_ipa(name, number, dist, prof)
     export = File.join(Dir.mktmpdir('ship-export-'), 'ExportOptions.plist')
     File.write(export, [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -858,7 +931,7 @@ module Ship
       '<key>method</key><string>app-store-connect</string>',
       "<key>teamID</key><string>#{team_id}</string>",
       '<key>signingStyle</key><string>manual</string>',
-      '<key>signingCertificate</key><string>Apple Distribution</string>',
+      "<key>signingCertificate</key><string>#{signing_identity(dist)}</string>",
       "<key>provisioningProfiles</key><dict><key>#{bundle_id}</key><string>#{prof['name']}</string></dict>",
       '<key>uploadSymbols</key><true/>',
       '</dict></plist>'
@@ -885,10 +958,10 @@ module Ship
         team_id: team_id,
         targets: ['Runner'],
         build_configurations: ['Release'],
-        code_sign_identity: 'Apple Distribution',
+        code_sign_identity: signing_identity(dist),
         profile_name: prof['name']
       )
-      build_ipa(name, number, prof)
+      build_ipa(name, number, dist, prof)
     end
   end
 
@@ -982,12 +1055,18 @@ end
 desc 'List what the vault holds (no secrets are printed)'
 lane :vault_list do
   Ship::Vault.sync!
-  Dir.glob(File.join(Ship::VAULT_DIR, 'android', '*', 'info.yml')).sort.each do |f|
+  dir = Ship::Vault.local_dir
+  UI.message("vault        #{Ship::Vault.name || 'default'}  #{dir}")
+  Dir.glob(File.join(dir, 'android', '*', 'info.yml')).sort.each do |f|
     info = YAML.safe_load(File.read(f))
-    UI.message("upload key  #{info['package_name']}  #{info['sha256']}  (#{info['created_at']}, #{info['created_on']})")
+    UI.message("upload key   #{info['package_name']}  #{info['sha256']}  (#{info['created_at']}, #{info['created_on']})")
   end
-  Dir.glob(File.join(Ship::VAULT_DIR, 'google-play', '*.json.enc')).sort.each do |f|
-    UI.message("play key    #{File.basename(f, '.json.enc')}")
+  { 'google-play' => 'play key', 'apple/asc' => 'asc key', 'apple/profiles' => 'profile' }.each do |sub, label|
+    Dir.glob(File.join(dir, sub, '*.json.enc')).sort.each { |f| UI.message("#{label.ljust(12)} #{File.basename(f, '.json.enc')}") }
+  end
+  Dir.glob(File.join(dir, 'apple', '*', '{distribution,apns}.json.enc')).sort.each do |f|
+    team = File.basename(File.dirname(f))
+    UI.message("#{File.basename(f, '.json.enc').ljust(12)} team #{team}") unless %w[asc profiles].include?(team)
   end
 end
 
@@ -1177,7 +1256,7 @@ platform :android do
     UI.message("keytool: #{Ship.keytool}")
     UI.message(Ship.capture!(Ship::WINDOWS ? 'flutter.bat' : 'flutter', '--version').lines.first.strip)
     Ship::Vault.sync!
-    UI.success("Vault OK (#{Ship::VAULT_DIR})")
+    UI.success("Vault OK (#{Ship::Vault.local_dir})")
     UI.message(Ship.keystore? ? "Upload key: #{Ship.signing_data['sha256']}" : 'Upload key: none yet (run the keystore lane)')
     Ship.with_play_key do |json_key|
       codes = Ship.play_version_codes(json_key)
@@ -1226,6 +1305,15 @@ platform :ios do
     prof = Ship.ensure_profile!(bid, dist)
     UI.success("Signing ready: certificate #{dist['name']}, profile '#{prof['name']}'")
     Ship.app_record_help unless Ship.asc_app
+  end
+
+  desc 'Share a distribution certificate the team already uses with the vault: certificate import:path/to/distribution.p12'
+  lane :certificate do |options|
+    path = options[:import] || UI.user_error!('Pass import:path/to/distribution.p12 (Keychain Access > the certificate > Export)')
+    Ship::Vault.sync!
+    UI.important("Replacing the vault certificate #{Ship.distribution['name']} for team #{Ship.team_id}") if Ship.distribution
+    Ship.import_distribution!(File.expand_path(path.to_s, Ship.root))
+    UI.success('Run `ios setup` to make the App Store profile with it. The .p12 file can be deleted.')
   end
 
   desc 'Build a signed .ipa without uploading (checks signing before the App Store Connect app exists)'

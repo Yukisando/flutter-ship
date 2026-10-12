@@ -37,6 +37,19 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
      `gh repo deploy-key add ... --allow-write`, private half as the secret, then the local files deleted.
 6. `$FL ios build` checks signing on the runner without uploading (the .ipa is kept as an artifact).
 
+## A client's Apple team
+
+- The client's admin makes the App Store Connect key (Users and Access > Integrations > Team Keys, App Manager)
+  and sends the `.p8` plus the issuer id: `$FL vault_add_asc_key path:<p8> issuer_id:<id> name:<client>`, then
+  `ios.asc_key: <client>` and the client's `ios.team_id` in ship.yml. Usually the app also has its own vault
+  (`vault:` in ship.yml, see the README) so the client's keys never sit next to the others.
+- **Apple refused a new distribution certificate / limit reached**: the team already uses its certificates. Ask the
+  admin to export one (Keychain Access > the certificate with its key > Export, .p12 with a password) and run
+  `$FL ios certificate import:<p12>` with `run_in_terminal`: the password is asked in the terminal, never in chat.
+  Then `$FL ios setup`. Delete the .p12 afterwards.
+- CI for that app: the workflow's vault checkout points at the client's vault repo, the deploy key goes on that repo,
+  and `SHIP_VAULT_PASSWORD` comes from `~/.ship/vaults/<client>.pass`.
+
 ## Listing and submission
 
 - `$FL ios metadata` sends the App Store listing (see ship-listing) and screenshots; `$FL ios status` shows the app,

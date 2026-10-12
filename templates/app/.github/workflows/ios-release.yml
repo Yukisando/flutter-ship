@@ -3,7 +3,10 @@
 #
 # Repository secrets (the ship-init skill sets them):
 #   SHIP_VAULT_PASSWORD      vault passphrase
-#   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the ship-vault repo (write: renewing a profile pushes it)
+#   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the vault repo (write: renewing a profile pushes it)
+#
+# The vault repo below is the app's vault: the owner's ship-vault, or the client's own vault
+# when ship.yml has `vault:` (it must match vault.repo there).
 name: iOS release
 
 on:
@@ -50,8 +53,8 @@ jobs:
       - name: Machine config
         run: |
           mkdir -p ~/.ship
-          ln -s "$GITHUB_WORKSPACE/.ship/vault" ~/.ship/vault
-          cp .ship/vault/config.yml ~/.ship/config.yml
+          # Owner name and contact; a client vault may have none (ship.yml owner_name covers it).
+          cp .ship/vault/config.yml ~/.ship/config.yml 2>/dev/null || true
           git config --global user.name "flutter-ship CI"
           git config --global user.email "ci@users.noreply.github.com"
 
@@ -74,6 +77,7 @@ jobs:
         run: bundle exec fastlane ios ${{ inputs.lane }}
         env:
           SHIP_LOCAL: ${{ github.workspace }}/.ship/lanes
+          SHIP_VAULT_DIR: ${{ github.workspace }}/.ship/vault
           SHIP_VAULT_PASSWORD: ${{ secrets.SHIP_VAULT_PASSWORD }}
 
       - name: Keep the .ipa
