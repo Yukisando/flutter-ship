@@ -548,7 +548,9 @@ module Ship
       app_id = src[/applicationId\s*=?\s*["']([^"']+)["']/, 1]
       errors << "applicationId is #{app_id}, ship.yml says #{package}" if app_id && app_id != package
       errors << "#{File.basename(gradle)} has no SHIP_KEYSTORE_PATH signing config (see templates/android)" unless src.include?('SHIP_KEYSTORE_PATH')
-    else
+    elsif File.exist?(File.join(root, 'pubspec.yaml'))
+      # Only a Flutter app builds through Gradle here. A Unity project uploads a bundle it
+      # signed itself (see Pygmak's upload lane), so it has no android/app to check.
       errors << 'android/app/build.gradle(.kts) not found'
     end
     warnings << 'ship.yml has no privacy_url (Play requires one for most apps)' if app['privacy_url'].to_s.empty?
