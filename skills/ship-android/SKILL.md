@@ -38,6 +38,8 @@ A build takes several minutes. Run it in the background and wait.
 
 A promotion with `status:completed` or a `rollout` reaches real users after Google's review, so confirm it with the user each time. Draft promotions are safe without asking.
 
+After a rejection, Publishing overview can keep the rejected release queued even once `promote` has put a new draft on production; the lane warns when the target track already held another release. Tell the user to open Test and release > Production > Edit release, pick the new build, save, and check Publishing overview before sending for review.
+
 ## Errors
 
 - **Version code already used**: someone uploaded outside the lanes. `version` reads Play again, so rerun.

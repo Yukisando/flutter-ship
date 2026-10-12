@@ -28,6 +28,15 @@ fastlane/metadata/android/<locale>/
 5. Full description: hook paragraph, then 4-7 feature lines starting with "• ", then who it is for, then a support or contact line. Mention only features that exist in the code. Google rejects misleading claims and keyword stuffing, and a repeated keyword counts as stuffing.
 6. Count characters (`python -c "print(len(open(p,encoding='utf-8').read().strip()))"`) or run `SHIP_LOCAL=$PLUGIN bundle exec fastlane android preflight`.
 
+### Apps that relay public or government information
+
+Play's Misleading Claims policy rejects any app showing government or public-service information (town news, official alerts, opening hours of public services) unless:
+- the full description has an easy-to-see disclaimer near the top: the app is independent and does not represent a government entity;
+- the full description lists the official sources with working URLs;
+- the app itself shows the same disclaimer and links (an About screen plus a notice next to the public information).
+
+Never word the copy so the app sounds official ("straight from the town hall"). If the app mostly relays news, the content rating questionnaire's Miscellaneous section asks "Is the app primarily a news or educational product?" (answer Yes), and Play then requires the News and magazine apps declaration (publisher contact URL, commercial or public entity, aggregator or not).
+
 ## Release notes
 
 Before each release, write `changelogs/<code>.txt` for every locale. Get the code from `... android version`. Base the notes on `git log <last android/* tag>..HEAD`. Write 1-4 user-facing lines; skip internal changes. If nothing changed for users, write "Corrections et améliorations." in French or "Bug fixes and improvements." in English. Delete changelog files for old codes only if they clutter the folder.

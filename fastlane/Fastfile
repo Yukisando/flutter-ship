@@ -1200,8 +1200,16 @@ platform :android do
         skip_upload_changelogs: true
       }
       params[:rollout] = options[:rollout].to_s if options[:rollout]
+      # After a rejection the console keeps the rejected release queued in Publishing
+      # overview; the API commit does not replace it there. Seen on Maya, 2026-10-12.
+      stale = Ship.track_releases(json_key).select do |r|
+        r[:track] == to && r[:status] != 'completed' && !r[:codes].include?(code)
+      end
       upload_to_play_store(params)
       UI.success("Version code #{code} promoted from #{from} to #{to} as #{status}.")
+      unless stale.empty?
+        UI.important("#{to} already had #{stale.map { |r| "#{r[:name]} (#{r[:status]})" }.join(', ')}. "                      "Play Console may still queue it: open Test and release > #{to.capitalize} > Edit release, "                      "pick build #{code}, save, then check Publishing overview before sending for review.")
+      end
     end
   end
 
