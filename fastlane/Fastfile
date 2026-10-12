@@ -942,7 +942,21 @@ module Ship
     end
     ipa = Dir.glob(File.join(root, 'build', 'ios', 'ipa', '*.ipa')).max_by { |f| File.mtime(f) }
     UI.user_error!('flutter build ipa produced no .ipa') unless ipa
+    upload_crashlytics_dsyms
     ipa
+  end
+
+  # Apps with Firebase Crashlytics (CocoaPods) send the build's dSYMs, or their iOS crashes arrive
+  # as bare addresses. A failed upload never sinks an otherwise good build.
+  def upload_crashlytics_dsyms
+    tool = File.join(root, 'ios', 'Pods', 'FirebaseCrashlytics', 'upload-symbols')
+    gsp = File.join(root, 'ios', 'Runner', 'GoogleService-Info.plist')
+    archive = Dir.glob(File.join(root, 'build', 'ios', 'archive', '*.xcarchive')).max_by { |f| File.mtime(f) }
+    dsyms = archive && File.join(archive, 'dSYMs')
+    return unless File.exist?(tool) && File.exist?(gsp) && dsyms && Dir.exist?(dsyms)
+    out, status = Open3.capture2e(tool, '-gsp', gsp, '-p', 'ios', dsyms)
+    return UI.success('dSYMs sent to Crashlytics') if status.success?
+    UI.important("Crashlytics dSYM upload failed; this build's iOS crashes will be unsymbolicated:\n#{out.lines.last(5).join}")
   end
 
   # Bundle id, certificate and profile checked, then a signed .ipa (macOS only).
