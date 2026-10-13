@@ -43,6 +43,9 @@ After a rejection, Publishing overview can keep the rejected release queued even
 ## Errors
 
 - **Version code already used**: someone uploaded outside the lanes. `version` reads Play again, so rerun.
+- **An upload refused after iOS took the shared number** (the iOS release ran first, then Play refused the bundle):
+  after the fix, `$FL android release version_code:<the iOS build number>` keeps both stores on the same number.
+  The lane refuses a code Play has already seen.
 - **Signed with ... not the upload key**: the Gradle signing patch is missing or wrong. See `$PLUGIN/templates/android/`.
 - **Upload key mismatch on Play** ("signed with the wrong key"): the vault key is not the one Play registered. Compare `$FL vault_list` with Play Console > App integrity > Upload key certificate. Import the right key, or request an upload key reset there.
 - **Only releases with status draft may be created on draft app**: the app was never published. Keep `draft` and roll out from the console.

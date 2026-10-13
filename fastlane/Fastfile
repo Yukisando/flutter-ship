@@ -1129,6 +1129,7 @@ end
 platform :android do
   desc 'Build a signed bundle with the next free version code and upload it to Play (draft by default)'
   desc 'Options: track:internal|alpha|beta|production  status:draft|completed  metadata:true (also send listing + images)'
+  desc '  version_code:N reuses the number iOS took when a previous Android upload was refused (must be new to Play)'
   lane :release do |options|
     Ship.preflight!(metadata: options[:metadata] == true)
     Ship::Vault.sync!
@@ -1136,6 +1137,14 @@ platform :android do
     Ship.with_play_key do |json_key|
       name, = Ship.pubspec_version
       code, on_play = Ship.next_version_code(json_key)
+      if options[:version_code]
+        # A retry after a refused upload, when iOS already took the shared number: Play never
+        # saw it, so the Android build can still carry the same one.
+        forced = options[:version_code].to_i
+        seen = Ship.play_version_codes(json_key)&.max || 0
+        UI.user_error!("Play has already seen version code #{seen}: version_code must be higher") if forced <= seen
+        code = forced
+      end
       UI.message("Version #{name} (#{code})")
       aab = Ship.build_aab(name, code)
       unless on_play
