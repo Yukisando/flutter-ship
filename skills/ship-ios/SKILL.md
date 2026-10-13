@@ -61,7 +61,7 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
 - `$FL ios check` lists what App Store Connect still needs before Add for Review: build picked, copyright, listing
   and iPhone screenshots per locale, review contact, sign-in, category, age rating, privacy URL, content rights,
   price, availability. `$FL ios check fix:true` also sets the three the API allows from `ship.yml`
-  (`ios.countries: [FRA]`, first one is the price base, free only; `ios.content_rights: third_party|none`).
+  (`ios.countries: [FRA]`, or `[FRA, ALL]` for every territory; the first code is the price base, free only; `ios.content_rights: third_party|none`).
   `build:N` picks that build for the version once Apple has processed it (state VALID).
   App Privacy (data types) is not in Apple's API: the user publishes it by hand. Run it before telling the user
   the app is ready to submit.

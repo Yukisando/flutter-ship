@@ -76,12 +76,26 @@ module Ship
     File.join(fastlane_dir, 'metadata', 'android')
   end
 
-  # "version: 1.2.3+45" in pubspec.yaml -> ["1.2.3", 45]
+  # "version: 1.2.3+45" in pubspec.yaml -> ["1.2.3", 45]. A Unity project has no pubspec: its version
+  # name and Android version code come from ProjectSettings (bundleVersion, AndroidBundleVersionCode).
   def pubspec_version
-    line = File.read(File.join(root, 'pubspec.yaml'))[/^version:\s*(\S+)/, 1]
+    pubspec = File.join(root, 'pubspec.yaml')
+    return unity_version if !File.exist?(pubspec) && File.exist?(unity_settings_path)
+
+    line = File.read(pubspec)[/^version:\s*(\S+)/, 1]
     UI.user_error!('pubspec.yaml has no version line') unless line
     name, build = line.split('+')
     [name, build.to_i]
+  end
+
+  def unity_settings_path
+    File.join(root, 'ProjectSettings', 'ProjectSettings.asset')
+  end
+
+  def unity_version
+    text = File.read(unity_settings_path)
+    name = text[/^\s*bundleVersion:\s*(\S+)/, 1] || UI.user_error!('ProjectSettings.asset has no bundleVersion')
+    [name, text[/^\s*AndroidBundleVersionCode:\s*(\d+)/, 1].to_i]
   end
 
   # ---------------------------------------------------------------- shell helpers
@@ -838,14 +852,24 @@ module Ship
     UI.success("Content rights set: #{value}")
   end
 
+  # ios.countries: App Store territory codes; ALL means every territory (and new ones as Apple adds them).
+  # The first real code is the price base, e.g. [FRA, ALL].
   def asc_countries
-    list = Array(ios['countries'])
-    UI.user_error!('Set ios.countries in fastlane/ship.yml (App Store territory codes, e.g. [FRA])') if list.empty?
+    list = Array(ios['countries']).map(&:to_s)
+    UI.user_error!('Set ios.countries in fastlane/ship.yml (App Store territory codes, e.g. [FRA] or [FRA, ALL])') if list.empty?
     list
   end
 
+  def asc_worldwide?
+    asc_countries.include?('ALL')
+  end
+
+  def asc_price_base
+    asc_countries.find { |c| c != 'ALL' } || 'USA'
+  end
+
   def asc_set_free_price!(a)
-    base = asc_countries.first
+    base = asc_price_base
     free = asc_get("v1/apps/#{a.id}/appPricePoints?filter[territory]=#{base}&limit=200")['data']
            .find { |p| p['attributes']['customerPrice'].to_f.zero? }
     UI.user_error!("No free price point for #{base}") unless free
@@ -864,20 +888,20 @@ module Ship
   # Apple wants every territory in the request, available or not.
   def asc_set_availability!(a)
     all = asc_get('v1/territories?limit=200')['data'].map { |t| t['id'] }
-    unknown = asc_countries - all
+    unknown = asc_countries - all - ['ALL']
     UI.user_error!("Unknown App Store territories in ios.countries: #{unknown.join(' ')}") if unknown.any?
     ids = all.map { |code| "${#{code}}" }
     asc_post('v2/appAvailabilities', {
-      data: { type: 'appAvailabilities', attributes: { availableInNewTerritories: false }, relationships: {
+      data: { type: 'appAvailabilities', attributes: { availableInNewTerritories: asc_worldwide? }, relationships: {
         app: { data: { type: 'apps', id: a.id } },
         territoryAvailabilities: { data: ids.map { |id| { type: 'territoryAvailabilities', id: id } } }
       } },
       included: all.zip(ids).map do |code, id|
-        { type: 'territoryAvailabilities', id: id, attributes: { available: asc_countries.include?(code) },
+        { type: 'territoryAvailabilities', id: id, attributes: { available: asc_worldwide? || asc_countries.include?(code) },
           relationships: { territory: { data: { type: 'territories', id: code } } } }
       end
     })
-    UI.success("Availability set: #{asc_countries.join(' ')} only")
+    UI.success(asc_worldwide? ? 'Availability set: every territory' : "Availability set: #{asc_countries.join(' ')} only")
   end
 
   def app_record_help
@@ -1010,8 +1034,10 @@ module Ship
   IOS_LIMITS = { 'name.txt' => 30, 'subtitle.txt' => 30, 'keywords.txt' => 100,
                  'promotional_text.txt' => 170, 'description.txt' => 4000, 'release_notes.txt' => 4000 }.freeze
   IOS_REQUIRED = %w[name.txt description.txt keywords.txt support_url.txt privacy_url.txt].freeze
-  # App Store screenshot sizes it accepts for the required 6.9" / 6.5" iPhone slot.
-  IOS_PHONE_SIZES = [[1320, 2868], [1290, 2796], [1284, 2778], [1242, 2688]].freeze
+  # App Store screenshot sizes it accepts for the required 6.9" / 6.5" iPhone slot, portrait or
+  # landscape (a landscape game is shot sideways).
+  IOS_PHONE_SIZES = [[1320, 2868], [1290, 2796], [1284, 2778], [1242, 2688]]
+                    .flat_map { |w, h| [[w, h], [h, w]] }.freeze
 
   def ios_metadata_dir
     File.join(fastlane_dir, 'metadata', 'ios')
