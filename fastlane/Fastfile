@@ -1065,7 +1065,7 @@ end
 
 desc 'Add a Google Play service account key to the vault (name: defaults to "default")'
 lane :vault_add_play_key do |options|
-  path = options[:path] || UI.user_error!('Pass path:/path/to/service-account.json')
+  path = File.expand_path(options[:path] || UI.user_error!('Pass path:/path/to/service-account.json'), Ship.root)
   json = File.read(path)
   UI.user_error!("#{path} is not a service account key") unless JSON.parse(json)['type'] == 'service_account'
   name = options[:name] || 'default'
@@ -1316,7 +1316,7 @@ end
 desc 'Add an Apple account: vault_add_asc_key path:AuthKey_X.p8 issuer_id: team_id: name: (key_id:)'
 desc 'path: may also be a fastlane API key .json ({key_id, issuer_id, key}), which carries the ids'
 lane :vault_add_asc_key do |options|
-  path = options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8')
+  path = File.expand_path(options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8'), Ship.root)
   json = path.end_with?('.json') ? JSON.parse(File.read(path)) : {}
   key_id = options[:key_id] || json['key_id'] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
   issuer = options[:issuer_id] || json['issuer_id'] || UI.user_error!('Pass issuer_id: (App Store Connect > Users and Access > Integrations)')
@@ -1333,7 +1333,7 @@ end
 
 desc 'Add an APNs auth key to the vault: vault_add_apns_key path:AuthKey_X.p8 team_id: (key_id:)'
 lane :vault_add_apns_key do |options|
-  path = options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8')
+  path = File.expand_path(options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8'), Ship.root)
   key_id = options[:key_id] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
   team = options[:team_id] || UI.user_error!('Pass team_id:')
   Ship::Vault.sync!
