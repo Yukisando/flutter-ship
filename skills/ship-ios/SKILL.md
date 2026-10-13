@@ -25,7 +25,8 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
    - APNs key, if the app uses push: `$FL vault_add_apns_key path:<AuthKey_Y.p8> team_id:<team>`.
      The user also uploads that .p8 in Firebase > Project settings > Cloud Messaging.
 2. `fastlane/ship.yml`: an `ios:` block with `asc_key: <account>` (the team comes with the key) and `capabilities`
-   (e.g. `[PUSH_NOTIFICATIONS]`). `vault_list` shows each key's team.
+   (e.g. `[PUSH_NOTIFICATIONS]`; App Store Connect API names: Sign in with Apple is `APPLE_ID_AUTH`, Universal Links
+   `ASSOCIATED_DOMAINS`). `vault_list` shows each key's team.
 3. `$FL ios setup`: registers the bundle id and capabilities, makes the Apple Distribution certificate (one per team,
    private key only in the vault) and the App Store profile. It says when the App Store Connect app is missing:
    the user creates it by hand (Apps > + > New App, the bundle id); Apple's API cannot.
