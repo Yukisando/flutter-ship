@@ -27,7 +27,6 @@ Then, in any Flutter project: "set up shipping for this app", "ship it", "promot
 ~/.ship/config.yml   owner name, vault repo, contact and legal URLs
 ~/.ship/vault/       clone of the private vault repo
 ~/.ship/vault.pass   vault passphrase (also in your password manager)
-~/.ship/vaults/<name>/, <name>.pass    a client's own vault, when an app names one (see below)
 ```
 
 Vault layout:
@@ -42,32 +41,33 @@ google-play/<name>.json.enc        Play service account key
 
 Encryption: PBKDF2-HMAC-SHA256 (200,000 iterations, random salt) and AES-256-GCM, per file.
 
-## Client store accounts
+## Several store accounts
 
-Every key is picked per app in `fastlane/ship.yml`, so one machine ships to several Play and Apple accounts:
+One vault ships to any number of Play and Apple accounts, yours or clients'. Each app's `fastlane/ship.yml` names
+the accounts it ships with, and the two stores can differ:
 
 ```yaml
-owner_name: Acme SAS                 # name on new upload keys and certificates (default: yours)
-vault:                               # optional: the client's own vault
-  name: acme                         # ~/.ship/vaults/acme, passphrase in ~/.ship/vaults/acme.pass
-  repo: https://github.com/acme/ship-vault.git
 play:
-  service_account: acme              # google-play/acme in that vault
+  service_account: default   # google-play/default: one Google key, invited by every Play account
 ios:
-  team_id: ABCDE12345                # the client's Apple team
-  asc_key: acme                      # apple/asc/acme in that vault
+  asc_key: spinlab           # apple/asc/spinlab: that Apple account's key, its team stored with it
 ```
 
-- **Google Play**: the client invites a service account email in their Play Console (Users and permissions, only
-  their apps). It can be the same service account as yours: one Google key works across Play developer accounts.
-- **Apple**: API keys belong to one team. A client admin creates a Team key (App Manager role) and sends the `.p8`:
-  `vault_add_asc_key path: issuer_id: name:acme`.
-- **Distribution certificate**: `ios setup` makes one in the client's team. When the team is at Apple's limit, or
-  the client wants its existing one used, import it: `ios certificate import:distribution.p12`. An imported
-  certificate is never replaced silently; when it expires the lane asks for the new one.
-- **Separate vault**: without `vault:`, client keys go in your own vault next to every other app's. With it they
-  live in their own repo under their own passphrase: the client's CI can read that vault and nothing else, and
-  ending the work means handing over or deleting one repo.
+Adding an account, once:
+
+- **Google Play**: in that account's Play Console, Users and permissions > Invite new users: the service account
+  email that `vault_list` prints, with release rights on the account's apps. Nothing changes in the vault:
+  one Google key works across Play developer accounts.
+- **Apple**: API keys belong to one team. In that account's App Store Connect (as its Admin), Users and Access >
+  Integrations > Team Keys > a key with the App Manager role. Then
+  `vault_add_asc_key path:AuthKey_X.p8 issuer_id: team_id: name:<account>`.
+- **Distribution certificate**: `ios setup` makes one in the team. When the team is at Apple's limit, or its
+  existing certificate should be used, `ios certificate import:distribution.p12` imports it instead (it is then
+  never replaced silently: when it expires, the lane asks for the new one).
+- `owner_name` in ship.yml puts the account holder's name on new upload keys instead of yours.
+
+Ending the work for an account: revoke its Apple key in App Store Connect and remove the service account from
+its Play Console. The encrypted files stay in git history, but a revoked key is useless.
 
 ## App layout
 
@@ -103,4 +103,4 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 
 ## CI (later)
 
-Set `SHIP_VAULT_PASSWORD` (and `SHIP_VAULT_DIR` to a checkout of the app's vault), give the job read access to the vault repo, and run `bundle exec fastlane android release`. Alternatively, set `SHIP_PLAY_JSON` to a key file path to bypass the vault for Play access.
+Set `SHIP_VAULT_PASSWORD` (and `SHIP_VAULT_DIR` to a checkout of the vault), give the job read access to the vault repo, and run `bundle exec fastlane android release`. Alternatively, set `SHIP_PLAY_JSON` to a key file path to bypass the vault for Play access.

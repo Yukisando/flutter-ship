@@ -20,10 +20,12 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
 ## First time for an Apple team or an app
 
 1. Keys, once per team (the user downloads them; never print or paste them):
-   - App Store Connect API key (App Manager role): `$FL vault_add_asc_key path:<AuthKey_X.p8> issuer_id:<id>`
+   - App Store Connect API key (Team Key, App Manager role), once per Apple account:
+     `$FL vault_add_asc_key path:<AuthKey_X.p8> issuer_id:<id> team_id:<team> name:<account>`
    - APNs key, if the app uses push: `$FL vault_add_apns_key path:<AuthKey_Y.p8> team_id:<team>`.
      The user also uploads that .p8 in Firebase > Project settings > Cloud Messaging.
-2. `fastlane/ship.yml`: an `ios:` block with `team_id`, `asc_key: default`, `capabilities` (e.g. `[PUSH_NOTIFICATIONS]`).
+2. `fastlane/ship.yml`: an `ios:` block with `asc_key: <account>` (the team comes with the key) and `capabilities`
+   (e.g. `[PUSH_NOTIFICATIONS]`). `vault_list` shows each key's team.
 3. `$FL ios setup`: registers the bundle id and capabilities, makes the Apple Distribution certificate (one per team,
    private key only in the vault) and the App Store profile. It says when the App Store Connect app is missing:
    the user creates it by hand (Apps > + > New App, the bundle id); Apple's API cannot.
@@ -37,18 +39,15 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
      `gh repo deploy-key add ... --allow-write`, private half as the secret, then the local files deleted.
 6. `$FL ios build` checks signing on the runner without uploading (the .ipa is kept as an artifact).
 
-## A client's Apple team
+## Another Apple account (a client's)
 
-- The client's admin makes the App Store Connect key (Users and Access > Integrations > Team Keys, App Manager)
-  and sends the `.p8` plus the issuer id: `$FL vault_add_asc_key path:<p8> issuer_id:<id> name:<client>`, then
-  `ios.asc_key: <client>` and the client's `ios.team_id` in ship.yml. Usually the app also has its own vault
-  (`vault:` in ship.yml, see the README) so the client's keys never sit next to the others.
+- Being a user (even Admin) on the client's team does not let the vault's other keys in: the account needs its own
+  Team Key. Its admin (or the user, when Admin there) makes it and runs
+  `$FL vault_add_asc_key path:<p8> issuer_id:<id> team_id:<team> name:<client>`, then `ios.asc_key: <client>`.
 - **Apple refused a new distribution certificate / limit reached**: the team already uses its certificates. Ask the
   admin to export one (Keychain Access > the certificate with its key > Export, .p12 with a password) and run
   `$FL ios certificate import:<p12>` with `run_in_terminal`: the password is asked in the terminal, never in chat.
   Then `$FL ios setup`. Delete the .p12 afterwards.
-- CI for that app: the workflow's vault checkout points at the client's vault repo, the deploy key goes on that repo,
-  and `SHIP_VAULT_PASSWORD` comes from `~/.ship/vaults/<client>.pass`.
 
 ## Listing and submission
 

@@ -17,7 +17,7 @@ If `~/.ship/config.yml` or `~/.ship/vault.pass` is missing, follow the ship-setu
 
 - **Listing languages**: default `fr-FR` + `en-US`. The first one is the default listing language. Offer the languages the app is localised in (`lib/l10n/*.arb`, `l10n.yaml`).
 - **Upload key**: "New app (create a key)" (default), or "Already on Play: import the existing keystore". If importing, ask for the `.jks` path.
-- **Store accounts**: "Mine" (default) or "A client's". For a client: their name (`owner_name` in ship.yml), and whether their keys get their own vault (recommended: a new private repo, `vault: {name, repo}` in ship.yml, a fresh passphrase in `~/.ship/vaults/<name>.pass` made like ship-setup does, which the user stores in their password manager). Their Play Console invites the service account email (`play.service_account`); for iOS see ship-ios, "A client's Apple team".
+- **Store accounts**: which Play and Apple accounts the app ships to (they may differ). List what the vault knows with `vault_list`. A new account is added once (README, "Several store accounts"): its Play Console invites the service account email `vault_list` prints, and its Apple key goes in with `vault_add_asc_key ... name:<account>`. Set `play.service_account` and `ios.asc_key` in ship.yml, and `owner_name` when the account holder is a client.
 
 Read everything else from the project:
 - `package_name`: `applicationId` in `android/app/build.gradle(.kts)`. Stop if it is `com.example.*`: Play rejects it, and the package name can never change after the first upload. Propose a name and confirm it with the user.

@@ -4,9 +4,6 @@
 # Repository secrets (the ship-init skill sets them):
 #   SHIP_VAULT_PASSWORD      vault passphrase
 #   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the vault repo (write: renewing a profile pushes it)
-#
-# The vault repo below is the app's vault: the owner's ship-vault, or the client's own vault
-# when ship.yml has `vault:` (it must match vault.repo there).
 name: iOS release
 
 on:

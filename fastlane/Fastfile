@@ -7,8 +7,8 @@
 #                        upload keystores and Play service account keys, so every machine
 #                        builds with the same keys. Its passphrase lives in ~/.ship/vault.pass
 #                        (or SHIP_VAULT_PASSWORD) and in the owner's password manager.
-#                        An app on a client's store accounts can name its own vault instead
-#                        (`vault:` in ship.yml): ~/.ship/vaults/<name> and <name>.pass.
+#                        One vault serves every store account: ship.yml names the Play
+#                        service account and the App Store Connect key each app ships with.
 #
 # Version codes come from Google Play itself (highest code ever uploaded + 1), so builds made
 # on different machines never collide.
@@ -137,35 +137,16 @@ module Ship
     def info_path(pkg) = "android/#{pkg}/info.yml"
     def play_key_path(name) = "google-play/#{name}.json.enc"
 
-    # Without `vault:` in ship.yml an app uses the owner's vault (~/.ship/vault). An app on a
-    # client's store accounts names its own, a separate repo under a separate passphrase, so the
-    # client's CI only ever reads that client's keys and ending the work is deleting one repo:
-    #   vault: { name: acme, repo: https://github.com/acme/ship-vault.git }
-    def settings
-      @settings ||= begin
-        v = File.exist?(File.join(Ship.fastlane_dir, 'ship.yml')) ? Ship.app['vault'] : nil
-        UI.user_error!('vault in fastlane/ship.yml needs name: and repo:') unless v.nil? || (v.is_a?(Hash) && v['name'])
-        UI.user_error!('vault.name in fastlane/ship.yml: letters, digits, - and _ only') if v && v['name'].to_s !~ /\A[\w-]+\z/
-        v || {}
-      end
-    end
-
-    def name
-      settings['name']
-    end
-
     # CI checks the vault out itself and points SHIP_VAULT_DIR at it.
     def local_dir
-      return ENV['SHIP_VAULT_DIR'] if ENV['SHIP_VAULT_DIR'].to_s != ''
-      name ? File.join(HOME, 'vaults', name) : File.join(HOME, 'vault')
+      ENV['SHIP_VAULT_DIR'].to_s.empty? ? File.join(HOME, 'vault') : ENV['SHIP_VAULT_DIR']
     end
 
     def pass_file
-      name ? File.join(HOME, 'vaults', "#{name}.pass") : File.join(HOME, 'vault.pass')
+      File.join(HOME, 'vault.pass')
     end
 
     def repo_url
-      return settings['repo'] || UI.user_error!("Set vault.repo in fastlane/ship.yml for the #{name} vault.") if name
       Ship.machine['vault_repo'] ||
         UI.user_error!("Set vault_repo in #{CONFIG_FILE} (the ship-setup skill does this).")
     end
@@ -637,8 +618,17 @@ module Ship
     ios['bundle_id'] || package
   end
 
+  # The team comes with the App Store Connect key (vault_add_asc_key team_id:), so an app names
+  # one Apple account. ios.team_id in ship.yml is only needed for keys stored without a team.
   def team_id
-    ios['team_id'] || UI.user_error!('Set ios.team_id in fastlane/ship.yml (developer.apple.com > Membership)')
+    key_team = asc_key['team_id']
+    app_team = ios['team_id']
+    if key_team && app_team && key_team != app_team
+      UI.user_error!("ship.yml says ios.team_id #{app_team}, but the '#{ios['asc_key']}' key belongs to team #{key_team}. " \
+                     'Remove ios.team_id from ship.yml.')
+    end
+    key_team || app_team ||
+      UI.user_error!("The '#{ios['asc_key']}' key has no team: set ios.team_id in fastlane/ship.yml (developer.apple.com > Membership)")
   end
 
   module Vault
@@ -651,9 +641,11 @@ module Ship
   end
 
   def asc_key
-    rel = Vault.asc_key_path(ios['asc_key'])
-    UI.user_error!("No App Store Connect key in the vault (#{rel}). Run vault_add_asc_key.") unless Vault.exist?(rel)
-    JSON.parse(Vault.read(rel))
+    @asc_key ||= begin
+      rel = Vault.asc_key_path(ios['asc_key'])
+      UI.user_error!("No App Store Connect key in the vault (#{rel}). Run vault_add_asc_key.") unless Vault.exist?(rel)
+      JSON.parse(Vault.read(rel))
+    end
   end
 
   # The hash fastlane actions take as api_key:.
@@ -1072,14 +1064,21 @@ desc 'List what the vault holds (no secrets are printed)'
 lane :vault_list do
   Ship::Vault.sync!
   dir = Ship::Vault.local_dir
-  UI.message("vault        #{Ship::Vault.name || 'default'}  #{dir}")
+  UI.message("vault        #{dir}")
   Dir.glob(File.join(dir, 'android', '*', 'info.yml')).sort.each do |f|
     info = YAML.safe_load(File.read(f))
     UI.message("upload key   #{info['package_name']}  #{info['sha256']}  (#{info['created_at']}, #{info['created_on']})")
   end
-  { 'google-play' => 'play key', 'apple/asc' => 'asc key', 'apple/profiles' => 'profile' }.each do |sub, label|
-    Dir.glob(File.join(dir, sub, '*.json.enc')).sort.each { |f| UI.message("#{label.ljust(12)} #{File.basename(f, '.json.enc')}") }
+  # Each store account a Play key can reach invites this email (Users and permissions).
+  Dir.glob(File.join(dir, 'google-play', '*.json.enc')).sort.each do |f|
+    email = JSON.parse(Ship::Vault.decrypt(File.binread(f)))['client_email']
+    UI.message("play key     #{File.basename(f, '.json.enc')}  #{email}")
   end
+  Dir.glob(File.join(dir, 'apple', 'asc', '*.json.enc')).sort.each do |f|
+    team = JSON.parse(Ship::Vault.decrypt(File.binread(f)))['team_id']
+    UI.message("asc key      #{File.basename(f, '.json.enc')}  team #{team || '? (set ios.team_id in ship.yml)'}")
+  end
+  Dir.glob(File.join(dir, 'apple', 'profiles', '*.json.enc')).sort.each { |f| UI.message("profile      #{File.basename(f, '.json.enc')}") }
   Dir.glob(File.join(dir, 'apple', '*', '{distribution,apns}.json.enc')).sort.each do |f|
     team = File.basename(File.dirname(f))
     UI.message("#{File.basename(f, '.json.enc').ljust(12)} team #{team}") unless %w[asc profiles].include?(team)
@@ -1295,17 +1294,18 @@ platform :android do
   end
 end
 
-desc 'Add an App Store Connect API key to the vault: vault_add_asc_key path:AuthKey_X.p8 issuer_id: (key_id: name:default)'
+desc 'Add an Apple account: vault_add_asc_key path:AuthKey_X.p8 issuer_id: team_id: name: (key_id:)'
 lane :vault_add_asc_key do |options|
   path = options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8')
   key_id = options[:key_id] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
   issuer = options[:issuer_id] || UI.user_error!('Pass issuer_id: (App Store Connect > Users and Access > Integrations)')
-  name = options[:name] || 'default'
+  team = options[:team_id] || UI.user_error!('Pass team_id: (developer.apple.com > Membership of that account)')
+  name = options[:name] || UI.user_error!('Pass name: (the account, e.g. coldsnap or a client name; apps pick it with ios.asc_key)')
   Ship::Vault.sync!
-  data = { 'key_id' => key_id, 'issuer_id' => issuer, 'key' => Ship.pem_key!(path) }
+  data = { 'key_id' => key_id, 'issuer_id' => issuer, 'team_id' => team, 'key' => Ship.pem_key!(path) }
   Ship::Vault.write(Ship::Vault.asc_key_path(name), JSON.generate(data))
   Ship::Vault.publish!("Add App Store Connect key #{name}")
-  UI.success("Stored as apple/asc/#{name}.")
+  UI.success("Stored as apple/asc/#{name} (team #{team}). Apps on this account: ios.asc_key: #{name}.")
 end
 
 desc 'Add an APNs auth key to the vault: vault_add_apns_key path:AuthKey_X.p8 team_id: (key_id:)'
