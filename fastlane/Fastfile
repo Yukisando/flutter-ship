@@ -887,7 +887,7 @@ module Ship
 
   # Apple wants every territory in the request, available or not.
   def asc_set_availability!(a)
-    all = asc_get('v1/territories?limit=200')['data'].map { |t| t['id'] }
+    all = asc_territories.keys
     unknown = asc_countries - all - ['ALL']
     UI.user_error!("Unknown App Store territories in ios.countries: #{unknown.join(' ')}") if unknown.any?
     ids = all.map { |code| "${#{code}}" }
@@ -1085,6 +1085,219 @@ module Ship
     capture!('gh', 'workflow', 'run', IOS_WORKFLOW, '--ref', branch, '-R', repo, '-f', "lane=#{lane}")
     UI.success("ios #{lane} started on GitHub Actions (macOS, branch #{branch}). Follow it with: gh run watch -R #{repo}")
   end
+
+  # ---------------------------------------------------------------- in-app products
+  #
+  # ship.yml `products:` lists one-time purchases: a non-consumable on the App Store and a one-time
+  # product on Play, with the same id and price on both stores.
+  #
+  #   products:
+  #     - id: com.example.app.level_pack        # permanent: a store never lets an id be used again
+  #       price: 4.99 EUR                       # exact in regions using that currency, converted by Play for
+  #                                             # the others; on the App Store a price step in the base
+  #                                             # territory's currency
+  #       listing:                              # per store language: name max 35, description max 55
+  #         en-US: { name: Level pack, description: Ten extra levels }
+  #       review_screenshot: fastlane/products/level_pack.png   # optional, App Store review
+  #       review_note: Unlocked from the level map.               # optional, App Store review
+
+  IAP_NAME_MAX = 35        # App Store display name (Play allows 55)
+  IAP_DESCRIPTION_MAX = 55 # App Store description (Play allows 200)
+  PLAY_PURCHASE_OPTION = 'buy'
+
+  def products
+    Array(app['products'])
+  end
+
+  # "4.99 EUR" -> ["4.99", "EUR"], nil when malformed.
+  def product_price(p)
+    amount, currency = p['price'].to_s.split
+    return nil unless amount.to_s =~ /\A\d+(\.\d{1,2})?\z/ && currency.to_s =~ /\A[A-Z]{3}\z/
+    [amount, currency]
+  end
+
+  def products_preflight
+    errors = []
+    ids = products.map { |p| p['id'] }
+    errors << 'products: the same id appears twice' if ids.uniq.size != ids.size
+    products.each do |p|
+      id = p['id'].to_s
+      errors << "products: #{id.inspect} is not a valid id (lowercase letters, digits, . and _)" unless id =~ /\A[a-z0-9][a-z0-9._]{0,138}\z/
+      errors << "products #{id}: write the price as '4.99 EUR'" unless product_price(p)
+      listing = p['listing'] || {}
+      errors << "products #{id}: no listing" if listing.empty?
+      listing.each do |loc, l|
+        name = l['name'].to_s
+        description = l['description'].to_s
+        errors << "products #{id} #{loc}: name is missing" if name.empty?
+        errors << "products #{id} #{loc}: description is missing" if description.empty?
+        errors << "products #{id} #{loc}: name is #{name.length} characters (max #{IAP_NAME_MAX})" if name.length > IAP_NAME_MAX
+        if description.length > IAP_DESCRIPTION_MAX
+          errors << "products #{id} #{loc}: description is #{description.length} characters (max #{IAP_DESCRIPTION_MAX})"
+        end
+      end
+      shot = p['review_screenshot']
+      errors << "products #{id}: no file at #{shot}" if shot && !File.file?(File.expand_path(shot, root))
+    end
+    errors
+  end
+
+  def play_money(amount, currency)
+    units, cents = amount.split('.')
+    Google::Apis::AndroidpublisherV3::Money.new(currency_code: currency, units: units.to_i, nanos: cents.to_s.ljust(9, '0').to_i)
+  end
+
+  # Creates or updates one product on Play (monetization.onetimeproducts), with one "buy" purchase option
+  # priced in every region from the ship.yml price, and makes sure that option is active.
+  def play_sync_product!(json_key, p)
+    api = Google::Apis::AndroidpublisherV3
+    service = play_client(json_key).client
+    amount, currency = product_price(p)
+    price = play_money(amount, currency)
+    converted = service.convert_monetization_region_prices(package, api::ConvertRegionPricesRequest.new(price: price))
+    # Regions in the ship.yml currency keep its exact price: Play's conversion treats it as before tax
+    # (4.99 EUR came back as 5.99 in France). The other currencies take Play's conversion.
+    configs = converted.converted_region_prices.map do |region, c|
+      api::OneTimeProductPurchaseOptionRegionalPricingAndAvailabilityConfig.new(
+        region_code: region, price: c.price.currency_code == currency ? price : c.price, availability: 'AVAILABLE'
+      )
+    end
+    other = converted.converted_other_regions_price
+    option = api::OneTimeProductPurchaseOption.new(
+      purchase_option_id: PLAY_PURCHASE_OPTION,
+      buy_option: api::OneTimeProductBuyPurchaseOption.new(legacy_compatible: true),
+      regional_pricing_and_availability_configs: configs,
+      new_regions_config: api::OneTimeProductPurchaseOptionNewRegionsConfig.new(
+        availability: 'AVAILABLE', eur_price: other.eur_price, usd_price: other.usd_price
+      )
+    )
+    listings = p['listing'].map do |loc, l|
+      api::OneTimeProductListing.new(language_code: loc, title: l['name'], description: l['description'])
+    end
+    product = api::OneTimeProduct.new(package_name: package, product_id: p['id'], listings: listings, purchase_options: [option])
+    saved = service.patch_monetization_onetimeproduct(package, p['id'], product, allow_missing: true,
+                                                      regions_version_version: converted.region_version.version,
+                                                      update_mask: 'listings,purchaseOptions')
+    state = saved.purchase_options&.find { |o| o.purchase_option_id == PLAY_PURCHASE_OPTION }&.state
+    unless state == 'ACTIVE'
+      activate = api::ActivatePurchaseOptionRequest.new(package_name: package, product_id: p['id'],
+                                                        purchase_option_id: PLAY_PURCHASE_OPTION)
+      service.batch_monetization_onetimeproduct_purchase_option_update_states(
+        package, p['id'], api::BatchUpdatePurchaseOptionStatesRequest.new(
+          requests: [api::UpdatePurchaseOptionStateRequest.new(activate_purchase_option_request: activate)]
+        )
+      )
+    end
+    UI.success("Play: #{p['id']} at #{p['price']}, #{listings.size} language(s), active")
+  rescue Google::Apis::ClientError => e
+    hint = if e.message =~ /billing/i
+             'Play takes products only once a build with the BILLING permission has been uploaded (a draft on any track is enough).'
+           elsif e.status_code == 403
+             "The service account needs 'Manage store presence' on this app (Play Console > Users and permissions)."
+           end
+    UI.user_error!("Play refused #{p['id']}: #{e.message}#{hint ? "\n#{hint}" : ''}")
+  end
+
+  # Every App Store territory with its currency, e.g. { 'FRA' => 'EUR' }.
+  def asc_territories
+    @asc_territories ||= asc_get('v1/territories?limit=200')['data'].to_h { |t| [t['id'], t['attributes']['currency']] }
+  end
+
+  # Follows `links.next` until the block finds what it looks for.
+  def asc_find(path)
+    while path
+      page = asc_get(path)
+      found = page['data'].find { |item| yield item }
+      return found if found
+      path = page.dig('links', 'next')&.sub('https://api.appstoreconnect.apple.com/', '')
+    end
+    nil
+  end
+
+  # Creates or updates one non-consumable: listing, price, availability, review screenshot and note.
+  def asc_sync_product!(a, p)
+    id = p['id']
+    amount, currency = product_price(p)
+    base = asc_price_base
+    unless asc_territories[base] == currency
+      UI.user_error!("products #{id}: the App Store prices it in #{asc_territories[base]} (base territory #{base}), " \
+                     "ship.yml says #{currency}")
+    end
+    iap = asc_get("v1/apps/#{a.id}/inAppPurchasesV2?filter[productId]=#{id}")['data'].first
+    unless iap
+      iap = asc_post('v2/inAppPurchases', data: {
+        type: 'inAppPurchases',
+        attributes: { name: id[0, 64], productId: id, inAppPurchaseType: 'NON_CONSUMABLE', familySharable: false },
+        relationships: { app: { data: { type: 'apps', id: a.id } } }
+      })['data']
+      UI.success("App Store: created #{id}")
+    end
+    iid = iap['id']
+    if p['review_note'] && iap['attributes']['reviewNote'] != p['review_note']
+      asc_patch("v2/inAppPurchases/#{iid}", data: { type: 'inAppPurchases', id: iid, attributes: { reviewNote: p['review_note'] } })
+    end
+
+    have = asc_get("v2/inAppPurchases/#{iid}/inAppPurchaseLocalizations?limit=50")['data']
+    p['listing'].each do |loc, l|
+      attrs = { name: l['name'], description: l['description'] }
+      current = have.find { |h| h['attributes']['locale'] == loc }
+      if current.nil?
+        asc_post('v1/inAppPurchaseLocalizations', data: {
+          type: 'inAppPurchaseLocalizations', attributes: attrs.merge(locale: loc),
+          relationships: { inAppPurchaseV2: { data: { type: 'inAppPurchases', id: iid } } }
+        })
+      elsif current['attributes'].slice('name', 'description') != attrs.transform_keys(&:to_s)
+        asc_patch("v1/inAppPurchaseLocalizations/#{current['id']}",
+                  data: { type: 'inAppPurchaseLocalizations', id: current['id'], attributes: attrs })
+      end
+    end
+
+    point = asc_find("v2/inAppPurchases/#{iid}/pricePoints?filter[territory]=#{base}&limit=200") do |pp|
+      format('%.2f', pp['attributes']['customerPrice'].to_f) == format('%.2f', amount.to_f)
+    end
+    UI.user_error!("products #{id}: #{amount} #{currency} is not an App Store price step in #{base}. Pick a listed step, e.g. 4.99 or 5.99.") unless point
+    asc_post('v1/inAppPurchasePriceSchedules', {
+      data: { type: 'inAppPurchasePriceSchedules', relationships: {
+        inAppPurchase: { data: { type: 'inAppPurchases', id: iid } },
+        baseTerritory: { data: { type: 'territories', id: base } },
+        manualPrices: { data: [{ type: 'inAppPurchasePrices', id: '${price}' }] }
+      } },
+      included: [{ type: 'inAppPurchasePrices', id: '${price}', attributes: { startDate: nil },
+                   relationships: { inAppPurchaseV2: { data: { type: 'inAppPurchases', id: iid } },
+                                    inAppPurchasePricePoint: { data: { type: 'inAppPurchasePricePoints', id: point['id'] } } } }]
+    })
+
+    territories = asc_worldwide? ? asc_territories.keys : asc_countries
+    asc_post('v1/inAppPurchaseAvailabilities', data: {
+      type: 'inAppPurchaseAvailabilities', attributes: { availableInNewTerritories: asc_worldwide? },
+      relationships: { inAppPurchase: { data: { type: 'inAppPurchases', id: iid } },
+                       availableTerritories: { data: territories.map { |t| { type: 'territories', id: t } } } }
+    })
+
+    asc_upload_review_screenshot!(iid, File.expand_path(p['review_screenshot'], root)) if p['review_screenshot']
+
+    state = asc_get("v2/inAppPurchases/#{iid}")['data']['attributes']['state']
+    UI.success("App Store: #{id} at #{p['price']}, #{p['listing'].size} language(s), state #{state}")
+    UI.important("  #{id} still lacks a review screenshot (review_screenshot: in ship.yml)") if state == 'MISSING_METADATA' && !p['review_screenshot']
+  end
+
+  # Replaces the review screenshot when the file changed (Apple keeps the checksum).
+  def asc_upload_review_screenshot!(iid, path)
+    require 'digest'
+    bytes = File.binread(path)
+    checksum = Digest::MD5.hexdigest(bytes)
+    existing = asc_get("v2/inAppPurchases/#{iid}/appStoreReviewScreenshot")&.dig('data')
+    return if existing && existing.dig('attributes', 'sourceFileChecksum') == checksum
+    asc_request(Net::HTTP::Delete, "v1/inAppPurchaseAppStoreReviewScreenshots/#{existing['id']}") if existing
+    shot = asc_post('v1/inAppPurchaseAppStoreReviewScreenshots', data: {
+      type: 'inAppPurchaseAppStoreReviewScreenshots', attributes: { fileName: File.basename(path), fileSize: bytes.bytesize },
+      relationships: { inAppPurchaseV2: { data: { type: 'inAppPurchases', id: iid } } }
+    })['data']
+    Spaceship::ConnectAPI::FileUploader.upload(shot['attributes']['uploadOperations'], bytes)
+    asc_patch("v1/inAppPurchaseAppStoreReviewScreenshots/#{shot['id']}", data: {
+      type: 'inAppPurchaseAppStoreReviewScreenshots', id: shot['id'], attributes: { uploaded: true, sourceFileChecksum: checksum }
+    })
+  end
 end
 
 # ------------------------------------------------------------------ lanes
@@ -1124,6 +1337,26 @@ lane :vault_list do
     team = File.basename(File.dirname(f))
     UI.message("#{File.basename(f, '.json.enc').ljust(12)} team #{team}") unless %w[asc profiles].include?(team)
   end
+end
+
+desc 'Create or update the in-app products listed under products: in ship.yml, on Play and the App Store:'
+desc 'listing, price and availability, from one file. only:android|ios limits it to one store'
+lane :products do |options|
+  UI.user_error!('No products: in fastlane/ship.yml (see "In-app products" in the flutter-ship README)') if Ship.products.empty?
+  errors = Ship.products_preflight
+  errors.each { |e| UI.error(e) }
+  UI.user_error!("products: has #{errors.size} problem(s)") unless errors.empty?
+  Ship::Vault.sync!
+  only = options[:only].to_s
+  unless only == 'ios'
+    Ship.with_play_key { |json_key| Ship.products.each { |p| Ship.play_sync_product!(json_key, p) } }
+  end
+  next if only == 'android' || !Ship.app['ios']
+  a = Ship.asc_app
+  next Ship.app_record_help unless a
+  Ship.products.each { |p| Ship.asc_sync_product!(a, p) }
+  UI.message('A first in-app purchase is reviewed with an app version: App Store Connect > the version > ' \
+             'In-App Purchases and Subscriptions > add it before Add for Review.')
 end
 
 platform :android do
@@ -1448,7 +1681,7 @@ platform :ios do
     Ship::Vault.sync!
     a = Ship.asc_app
     next Ship.app_record_help unless a
-    UI.message("#{a.name}  #{a.bundle_id}  SKU #{a.sku}")
+    UI.message("#{a.name}  #{a.bundle_id}  SKU #{a.sku}  Apple ID #{a.id}")
     a.get_app_store_versions(filter: { platform: 'IOS' }).first(5).each do |v|
       UI.message("version #{v.version_string.ljust(8)} #{v.app_store_state}")
     end

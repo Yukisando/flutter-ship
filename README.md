@@ -99,8 +99,34 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `android preflight` | offline check against Play limits |
 | `android doctor` | tools, vault, Play access |
 | `ios certificate import:path.p12` | use a distribution certificate the Apple team already has |
+| `products [only:android\|ios]` | create or update the in-app products of `ship.yml` on both stores |
 | `vault_add_play_key path: [name:]` | store a service account key in the vault |
 | `vault_list` | what the vault holds, without secrets |
+
+## In-app products
+
+One-time purchases (non-consumable on the App Store, one-time product on Play) are listed once in `ship.yml`
+and `bundle exec fastlane products` creates or updates them on both stores: listing, price, availability, and the
+App Store review screenshot. Run it again after any change.
+
+```yaml
+products:
+  - id: com.example.app.level_pack     # permanent: a store never lets an id be used again
+    price: 4.99 EUR                    # an App Store price step in the base territory's currency
+    listing:                           # per store language: name max 35, description max 55
+      en-US: { name: Level pack, description: Ten extra levels }
+    review_screenshot: fastlane/products/level_pack.png   # optional
+    review_note: Unlocked from the level map.               # optional
+```
+
+- Price: regions in that currency get it exactly; Play converts it for the others. On the App Store the base
+  territory is the first of `ios.countries`, and availability follows `ios.countries`.
+- Play accepts products only after a build with the billing permission has been uploaded.
+- The Play key needs "Manage store presence"; the App Store key the App Manager role.
+- The first App Store in-app purchase is reviewed with an app version: add it to the version in App Store
+  Connect before Add for Review. The Paid Apps agreement must be active for it to sell.
+- Verifying purchases is the app's job (its own server, or a service such as RevenueCat): the lane only manages
+  the catalogue.
 
 ## CI (later)
 
