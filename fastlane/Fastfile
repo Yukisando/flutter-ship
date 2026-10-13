@@ -326,16 +326,31 @@ module Ship
     end
   end
 
-  def import_keystore!(path, key_alias)
+  # An existing app's key.properties (storeFile, storePassword, keyPassword, keyAlias), so the
+  # import needs no typing. storeFile resolves like Gradle's file() in android/app, else from
+  # the file's own folder or the home folder.
+  def keystore_properties(path)
+    UI.user_error!("No file at #{path}") unless File.file?(path)
+    props = File.read(path).lines.filter_map do |l|
+      k, v = l.strip.split('=', 2)
+      [k.strip, v.strip] if v && !k.start_with?('#')
+    end.to_h
+    store = props['storeFile'] || UI.user_error!("#{path} has no storeFile")
+    store = [File.join(root, 'android', 'app'), File.dirname(path), Dir.home]
+            .map { |d| File.expand_path(store, d) }.find { |f| File.file?(f) } || store
+    { path: store, alias: props['keyAlias'], password: props['storePassword'], key_password: props['keyPassword'] }
+  end
+
+  def import_keystore!(path, key_alias, store_pass: nil, key_pass: nil)
     UI.user_error!("The vault already has an upload key for #{package}.") if keystore?
     UI.user_error!("No file at #{path}") unless File.file?(path)
-    store_pass = UI.password('Keystore password:')
+    store_pass ||= UI.password('Keystore password:')
     env = { 'SHIP_KS_PASS' => store_pass }
     listing = capture!(keytool, '-J-Duser.language=en', '-list', '-keystore', path,
                        '-storepass:env', 'SHIP_KS_PASS', env: env)
     aliases = listing.scan(/^([^,\n]+),.*(?:PrivateKeyEntry|keyEntry)/i).flatten.map(&:strip)
     key_alias ||= aliases.size == 1 ? aliases.first : UI.select('Which key is the upload key?', aliases)
-    key_pass = UI.password('Key password (press Enter if it is the same):')
+    key_pass ||= UI.password('Key password (press Enter if it is the same):')
     key_pass = store_pass if key_pass.to_s.empty?
     out = capture!(keytool, '-J-Duser.language=en', '-list', '-v', '-keystore', path, '-alias', key_alias,
                    '-storepass:env', 'SHIP_KS_PASS', env: env)
@@ -1258,10 +1273,14 @@ platform :android do
     end
   end
 
-  desc 'Create the upload key in the vault, or import an existing one: keystore import:path/to/key.jks alias:upload'
+  desc 'Create the upload key in the vault, or import an existing one: keystore import:path/to/key.jks alias:upload,'
+  desc 'or keystore properties:android/key.properties (paths and passwords from the file, nothing to type)'
   lane :keystore do |options|
     Ship::Vault.sync!
-    if options[:import]
+    if options[:properties]
+      k = Ship.keystore_properties(File.expand_path(options[:properties].to_s, Ship.root))
+      Ship.import_keystore!(k[:path], options[:alias] || k[:alias], store_pass: k[:password], key_pass: k[:key_password])
+    elsif options[:import]
       Ship.import_keystore!(File.expand_path(options[:import].to_s, Ship.root), options[:alias])
     elsif !Ship.keystore?
       Ship.create_keystore!
@@ -1295,14 +1314,18 @@ platform :android do
 end
 
 desc 'Add an Apple account: vault_add_asc_key path:AuthKey_X.p8 issuer_id: team_id: name: (key_id:)'
+desc 'path: may also be a fastlane API key .json ({key_id, issuer_id, key}), which carries the ids'
 lane :vault_add_asc_key do |options|
   path = options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8')
-  key_id = options[:key_id] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
-  issuer = options[:issuer_id] || UI.user_error!('Pass issuer_id: (App Store Connect > Users and Access > Integrations)')
+  json = path.end_with?('.json') ? JSON.parse(File.read(path)) : {}
+  key_id = options[:key_id] || json['key_id'] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
+  issuer = options[:issuer_id] || json['issuer_id'] || UI.user_error!('Pass issuer_id: (App Store Connect > Users and Access > Integrations)')
   team = options[:team_id] || UI.user_error!('Pass team_id: (developer.apple.com > Membership of that account)')
   name = options[:name] || UI.user_error!('Pass name: (the account, e.g. coldsnap or a client name; apps pick it with ios.asc_key)')
   Ship::Vault.sync!
-  data = { 'key_id' => key_id, 'issuer_id' => issuer, 'team_id' => team, 'key' => Ship.pem_key!(path) }
+  pem = json['key'] ? json['key'].strip : Ship.pem_key!(path)
+  UI.user_error!("#{path} has no private key") unless pem.start_with?('-----BEGIN PRIVATE KEY-----') && OpenSSL::PKey.read(pem)
+  data = { 'key_id' => key_id, 'issuer_id' => issuer, 'team_id' => team, 'key' => pem }
   Ship::Vault.write(Ship::Vault.asc_key_path(name), JSON.generate(data))
   Ship::Vault.publish!("Add App Store Connect key #{name}")
   UI.success("Stored as apple/asc/#{name} (team #{team}). Apps on this account: ios.asc_key: #{name}.")

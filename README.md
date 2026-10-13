@@ -95,6 +95,7 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `android status` | releases on each track |
 | `android version` | next version name and code |
 | `android keystore [import:path] [alias:]` | create or import the upload key into the vault |
+| `android keystore properties:android/key.properties` | import an existing app's key, passwords read from the file |
 | `android preflight` | offline check against Play limits |
 | `android doctor` | tools, vault, Play access |
 | `ios certificate import:path.p12` | use a distribution certificate the Apple team already has |
