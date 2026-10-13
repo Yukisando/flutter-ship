@@ -1564,4 +1564,73 @@ platform :ios do
     Ship.tag_ios!(name, number)
     UI.success("#{name} (#{number}) uploaded to TestFlight. It shows there once Apple has processed it.")
   end
+
+  # Unity: the Editor exports the Xcode project (any OS); macOS compiles, signs and uploads it. Off macOS the
+  # export travels as a zip on a draft GitHub release (a 1 GB Xcode project does not belong in git) and
+  # .github/workflows/ios-release.yml (templates/unity) builds it on a macOS runner.
+  desc 'Unity: send an Xcode export to TestFlight (xcode: build/iOS). Off macOS: draft release + macOS workflow'
+  lane :unity_release do |options|
+    xcode = File.expand_path((options[:xcode] || 'build/iOS').to_s, Ship.root)
+    plist_path = File.join(xcode, 'Info.plist')
+    UI.user_error!("No Xcode export at #{xcode}: build the iOS target from Unity first") unless File.exist?(plist_path)
+    next unity_ios_upload(xcode: xcode) if Ship::MAC
+
+    plist = File.read(plist_path)
+    version = plist[%r{<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>}, 1]
+    number = plist[%r{<key>CFBundleVersion</key>\s*<string>([^<]+)</string>}, 1]
+    tag = "ios-xcode/#{version}+#{number}"
+    zip = File.join(Dir.tmpdir, "#{Ship.bundle_id}-xcode-#{version}-#{number}.zip")
+    FileUtils.rm_f(zip)
+    # Windows' own bsdtar writes zip with -a (a GNU tar from Git on PATH would read C: as a host);
+    # symlinks and execute bits survive the round trip
+    tar = Gem.win_platform? ? File.join(ENV.fetch('SystemRoot', 'C:/Windows'), 'System32', 'tar.exe') : 'bsdtar'
+    Dir.chdir(xcode) { sh(tar, '-a', '-c', '-f', zip, '.') }
+    repo = sh('git', '-C', Ship.root, 'remote', 'get-url', 'origin', log: false).strip
+    # A draft release has no git tag behind it, so there is no tag to clean up
+    sh('gh', 'release', 'delete', tag, '-R', repo, '--yes', error_callback: ->(_) {})
+    sh('gh', 'release', 'create', tag, zip, '-R', repo, '--draft', '--title', "iOS Xcode export #{version} (#{number})",
+       '--notes', 'Unity Xcode export for the iOS workflow. Deleted by the workflow once the build is on TestFlight.')
+    sh('gh', 'workflow', 'run', 'ios-release.yml', '-R', repo, '-f', "release=#{tag}")
+    FileUtils.rm_f(zip)
+    UI.success("#{version} (#{number}) sent to the iOS workflow. Follow it with: gh run watch -R #{repo}")
+  end
+
+  private_lane :unity_ios_upload do |options|
+    xcode = options[:xcode]
+    Ship::Vault.sync!
+    dist = Ship.ensure_distribution!
+    prof = Ship.ensure_profile!(Ship.ensure_bundle_id!, dist)
+    identity = Ship.signing_identity(dist)
+
+    Dir.chdir(xcode) { sh('pod', 'install', '--repo-update') } if File.exist?(File.join(xcode, 'Podfile'))
+    project = File.join(xcode, 'Unity-iPhone.xcodeproj')
+    workspace = File.join(xcode, 'Unity-iPhone.xcworkspace')
+
+    Ship.with_ios_signing(dist, prof) do
+      update_code_signing_settings(path: project, use_automatic_signing: false, team_id: Ship.team_id,
+                                   targets: ['Unity-iPhone'], build_configurations: ['Release'],
+                                   code_sign_identity: identity, profile_name: prof['name'])
+      # The framework is re-signed when the app embeds it: it needs the identity, never a profile
+      update_code_signing_settings(path: project, use_automatic_signing: false, team_id: Ship.team_id,
+                                   targets: ['UnityFramework'], build_configurations: ['Release'],
+                                   code_sign_identity: identity)
+      ipa = build_app(
+        workspace: File.exist?(workspace) ? workspace : nil,
+        project: File.exist?(workspace) ? nil : project,
+        scheme: 'Unity-iPhone',
+        configuration: 'Release',
+        export_method: 'app-store',
+        export_options: {
+          teamID: Ship.team_id,
+          signingStyle: 'manual',
+          signingCertificate: identity,
+          provisioningProfiles: { Ship.bundle_id => prof['name'] }
+        },
+        output_directory: File.join(Ship.root, 'build', 'ipa'),
+        clean: true
+      )
+      upload_to_testflight(api_key: Ship.asc_api_key, ipa: ipa, skip_waiting_for_build_processing: true)
+    end
+    UI.success('Uploaded to TestFlight. It shows there once Apple has processed it.')
+  end
 end

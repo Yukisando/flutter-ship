@@ -40,6 +40,25 @@ iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the
      `gh repo deploy-key add ... --allow-write`, private half as the secret, then the local files deleted.
 6. `$FL ios build` checks signing on the runner without uploading (the .ipa is kept as an artifact).
 
+## Unity apps
+
+The Unity Editor exports the Xcode project on any OS; only macOS can compile it, so the export travels to a
+macOS runner as a zip on a draft GitHub release.
+
+1. In Unity, switch the active platform to iOS first (File > Build Profiles), then build to `build/iOS`.
+   An iOS build made while another platform is active skips every `#if UNITY_IOS` post-process step
+   (SDK SKAdNetwork ids, Info.plist keys) without an error. ColdSnap's Platform Builder (com.coldsnap.utilities)
+   does the switch, the Info.plist keys and the upload button. Version: Unity Player Settings
+   (`bundleVersion`, iOS build number); `ios version` reads ProjectSettings when there is no pubspec.
+2. Once per app: `ios:` block in ship.yml, `ios setup`, the App Store Connect app, and CI from
+   `$PLUGIN/templates/unity/.github/workflows/ios-release.yml` with `gem "cocoapods", ">= 1.16"` in the Gemfile
+   (`bundle lock --add-platform arm64-darwin x86_64-darwin`) and the two secrets above (a read-only vault deploy
+   key is enough).
+3. `$FL ios unity_release` (`xcode:build/iOS` by default): zips the export onto a draft release
+   `ios-xcode/<version>+<build>` and starts the workflow, which runs `pod install`, signs Unity-iPhone with the
+   profile and UnityFramework with the identity, uploads to TestFlight and deletes the draft.
+4. Landscape games: App Store screenshots at 2868x1320 are accepted (`ios preflight` checks both orientations).
+
 ## Another Apple account (a client's)
 
 - Being a user (even Admin) on the client's team does not let the vault's other keys in: the account needs its own
