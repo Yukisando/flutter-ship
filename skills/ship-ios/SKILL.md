@@ -84,6 +84,11 @@ macOS runner as a zip on a draft GitHub release.
   `build:N` picks that build for the version once Apple has processed it (state VALID).
   App Privacy (data types) is not in Apple's API: the user publishes it by hand. Run it before telling the user
   the app is ready to submit.
+- App Review may answer "Guideline 2.1 - Information Needed" and ask for a screen recording from a physical device
+  on the latest iOS, plus written answers. Name the device from `test_devices.ios` in `~/.ship/config.yml`, never a
+  placeholder; ask the user to confirm the iOS version when `checked` is over a month old, then update the field and
+  copy the file to the vault. Keep the answers in `fastlane/metadata/ios/review_information/notes.txt` so
+  `$FL ios metadata` keeps them in the Notes field for later submissions.
 - Picking the build and Add for Review stay manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
   console steps in the app's `fastlane/STORE_SETUP_IOS.md`, click by click with the exact values to type:
   APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), App Privacy (every data

@@ -47,6 +47,8 @@ legal:
   generic_url: https://example.com/legal/  # privacy/, tos/, delete-account/ under it
   website_repo: ~/Projects/example.com     # optional: where app-specific pages can be added
   app_path: apps/{slug}/
+test_devices:                              # optional: physical phones the owner records store videos on
+  ios: { model: iPhone 15, model_number: MTP03ZD/A, os: iOS 18.1, checked: 2026-01-31 }
 ```
 
 `legal.website_repo` is a local path: on another machine, fix it in `~/.ship/config.yml` if the website repo lives elsewhere.
