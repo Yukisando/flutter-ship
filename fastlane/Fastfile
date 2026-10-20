@@ -1075,15 +1075,99 @@ module Ship
   end
 
   # Off macOS: start the app's workflow, which runs `ios release` on a GitHub macOS runner.
-  def dispatch_ios_workflow!(lane)
+  def dispatch_ios_workflow!(lane, runner: nil)
     workflow = File.join(root, '.github', 'workflows', IOS_WORKFLOW)
     unless File.exist?(workflow)
       UI.user_error!("iOS builds need macOS. Add .github/workflows/#{IOS_WORKFLOW} from templates/app (ship-init) or run this on a Mac.")
     end
     branch = capture!('git', '-C', root, 'rev-parse', '--abbrev-ref', 'HEAD').strip
     repo = capture!('git', '-C', root, 'remote', 'get-url', 'origin').strip
+    where = route_ios_runner!(repo_slug(repo), File.read(workflow), runner)
     capture!('gh', 'workflow', 'run', IOS_WORKFLOW, '--ref', branch, '-R', repo, '-f', "lane=#{lane}")
-    UI.success("ios #{lane} started on GitHub Actions (macOS, branch #{branch}). Follow it with: gh run watch -R #{repo}")
+    UI.success("ios #{lane} started on #{where} (branch #{branch}). Follow it with: gh run watch -R #{repo}")
+  end
+
+  # ---------------------------------------------------------------- the owner's Mac as build machine
+  #
+  # config.yml `mac_runner:` (the vault's copy counts too) makes the owner's Mac the iOS build
+  # machine: a self-hosted GitHub runner per app repo (scripts/mac-runner.sh), picked by the repo
+  # variable IOS_RUNNER, which the workflow templates read for runs-on. An app with no runner
+  # there yet gets one through bootstrap_repo's mac-runner.yml, which runs on that repo's own
+  # runner on the same Mac. ship.yml `ios.runner: github` opts an app out; runner:github on a lane
+  # does it for one build.
+
+  def mac_runner
+    return nil if ios['runner'].to_s == 'github'
+    cfg = machine['mac_runner']
+    vault_cfg = File.join(Vault.local_dir, 'config.yml')
+    cfg ||= (YAML.safe_load(File.read(vault_cfg)) || {})['mac_runner'] if File.exist?(vault_cfg)
+    cfg.is_a?(Hash) ? cfg : nil
+  end
+
+  def repo_slug(url)
+    url[%r{github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?\z}, 1] || UI.user_error!("Not a GitHub remote: #{url}")
+  end
+
+  def gh_json(path)
+    JSON.parse(capture!('gh', 'api', path))
+  end
+
+  def runners_with(slug, labels)
+    gh_json("repos/#{slug}/actions/runners?per_page=100")['runners'].select do |r|
+      (labels - r['labels'].map { |l| l['name'] }).empty?
+    end
+  end
+
+  # Points the repo's iOS workflow at the Mac (registering its runner first when needed) or at
+  # GitHub's runners. Returns where the build will run, for the message.
+  def route_ios_runner!(slug, workflow_text, runner)
+    cfg = runner.to_s == 'github' ? nil : mac_runner
+    unless workflow_text.include?('IOS_RUNNER')
+      UI.important("#{IOS_WORKFLOW} predates the Mac runner, so it builds on GitHub. Copy flutter-ship's templates/app (or unity) workflow to use the Mac.") if cfg
+      return "GitHub's macOS runners"
+    end
+    unless cfg
+      Open3.capture2e('gh', 'variable', 'delete', 'IOS_RUNNER', '-R', slug)
+      return "GitHub's macOS runners (billed minutes)"
+    end
+    labels = Array(cfg['labels'] || %w[self-hosted macOS flutter-ship])
+    runners = runners_with(slug, labels)
+    if runners.empty?
+      boot = cfg['bootstrap_repo'] || UI.user_error!('mac_runner: has no bootstrap_repo in config.yml')
+      unless runners_with(boot, labels).any? { |r| r['status'] == 'online' }
+        UI.user_error!("The Mac is offline (no online runner on #{boot}). Wake it (charger, logged in), " \
+                       'or build on GitHub with runner:github.')
+      end
+      UI.message("No runner for #{slug} on the Mac yet: registering one through #{boot}...")
+      register_mac_runner!(boot, slug)
+      runners = runners_with(slug, labels)
+      UI.user_error!("The Mac registered no runner for #{slug}: gh run list -w mac-runner.yml -R #{boot}") if runners.empty?
+    end
+    online = runners.find { |r| r['status'] == 'online' }
+    unless online
+      UI.user_error!("The Mac's runner for #{slug} is offline. Wake the Mac (charger, logged in), or build on GitHub with runner:github.")
+    end
+    capture!('gh', 'variable', 'set', 'IOS_RUNNER', '-R', slug, '--body', JSON.generate(labels))
+    "the Mac (#{online['name']})"
+  end
+
+  def register_mac_runner!(boot, slug)
+    runs = "repos/#{boot}/actions/workflows/mac-runner.yml/runs?per_page=1"
+    before = gh_json(runs)['workflow_runs'].first&.dig('id')
+    capture!('gh', 'workflow', 'run', 'mac-runner.yml', '-R', boot, '-f', "repo=#{slug}", '-f', 'action=add')
+    run = nil
+    40.times do
+      sleep 3
+      latest = gh_json(runs)['workflow_runs'].first
+      next unless latest && latest['id'] != before
+      run = latest
+      break
+    end
+    UI.user_error!("mac-runner.yml did not start on #{boot}") unless run
+    out, status = Open3.capture2e('gh', 'run', 'watch', run['id'].to_s, '-R', boot, '--exit-status', '--interval', '5')
+    return if status.success?
+    UI.user_error!("Registering the runner for #{slug} failed:\n#{out.lines.last(10).join}" \
+                   "Log: gh run view #{run['id']} -R #{boot} --log")
   end
 
   # ---------------------------------------------------------------- in-app products
@@ -1632,8 +1716,8 @@ platform :ios do
   end
 
   desc 'Build a signed .ipa without uploading (checks signing before the App Store Connect app exists)'
-  lane :build do
-    next Ship.dispatch_ios_workflow!('build') unless Ship::MAC
+  lane :build do |options|
+    next Ship.dispatch_ios_workflow!('build', runner: options[:runner]) unless Ship::MAC
     Ship::Vault.sync!
     name, pubspec_number = Ship.pubspec_version
     number = (Ship.asc_app && Ship.next_build_number) || [pubspec_number, 1].max
@@ -1828,9 +1912,10 @@ platform :ios do
     UI.message("#{name} (#{number})")
   end
 
-  desc 'Build and upload to TestFlight. Off macOS this starts the GitHub Actions workflow instead'
-  lane :release do
-    next Ship.dispatch_ios_workflow!('release') unless Ship::MAC
+  desc 'Build and upload to TestFlight. Off macOS this starts the iOS workflow on the owner Mac (config.yml mac_runner:),'
+  desc 'registering its runner there on first use, or on GitHub. runner:github forces GitHub for this build'
+  lane :release do |options|
+    next Ship.dispatch_ios_workflow!('release', runner: options[:runner]) unless Ship::MAC
     Ship::Vault.sync!
     name, = Ship.pubspec_version
     number = Ship.next_build_number
@@ -1866,9 +1951,11 @@ platform :ios do
     sh('gh', 'release', 'delete', tag, '-R', repo, '--yes', error_callback: ->(_) {})
     sh('gh', 'release', 'create', tag, zip, '-R', repo, '--draft', '--title', "iOS Xcode export #{version} (#{number})",
        '--notes', 'Unity Xcode export for the iOS workflow. Deleted by the workflow once the build is on TestFlight.')
+    workflow = File.join(Ship.root, '.github', 'workflows', 'ios-release.yml')
+    where = Ship.route_ios_runner!(Ship.repo_slug(repo), File.exist?(workflow) ? File.read(workflow) : '', options[:runner])
     sh('gh', 'workflow', 'run', 'ios-release.yml', '-R', repo, '-f', "release=#{tag}")
     FileUtils.rm_f(zip)
-    UI.success("#{version} (#{number}) sent to the iOS workflow. Follow it with: gh run watch -R #{repo}")
+    UI.success("#{version} (#{number}) sent to the iOS workflow on #{where}. Follow it with: gh run watch -R #{repo}")
   end
 
   private_lane :unity_ios_upload do |options|
