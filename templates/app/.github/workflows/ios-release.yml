@@ -94,6 +94,12 @@ jobs:
           echo "BUNDLE_PATH=$HOME/.ship/gems/${GITHUB_REPOSITORY#*/}" >> "$GITHUB_ENV"
           BUNDLE_PATH="$HOME/.ship/gems/${GITHUB_REPOSITORY#*/}" bundle install --jobs 4
 
+      # A Mac keeps its CocoaPods specs cache between runs; a stale one fails pod install
+      # ("specs repository is too out-of-date"). GitHub's runners start fresh.
+      - name: Refresh CocoaPods specs (self-hosted Mac)
+        if: runner.environment == 'self-hosted'
+        run: bundle exec pod repo update --silent
+
       - name: fastlane ios ${{ inputs.lane }}
         run: bundle exec fastlane ios ${{ inputs.lane }}
         env:
