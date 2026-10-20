@@ -4,6 +4,14 @@
 # Repository secrets (the ship-init skill sets them):
 #   SHIP_VAULT_PASSWORD      vault passphrase
 #   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the vault repo (write: renewing a profile pushes it)
+#
+# Repository variable (optional):
+#   IOS_RUNNER               where the job runs, as JSON. Unset: GitHub's macos-26 (billed minutes).
+#                            '["self-hosted","macOS","flutter-ship"]': the owner's own Mac, set up by
+#                            flutter-ship's scripts/mac-runner.sh (free, but the Mac must be on).
+#
+# The vault repo below is the app's vault: the owner's ship-vault, or the client's own vault
+# when ship.yml has `vault:` (it must match vault.repo there).
 name: iOS release
 
 on:
@@ -25,12 +33,21 @@ concurrency:
 jobs:
   release:
     # App Store Connect only takes builds from the current Xcode (iOS 26 SDK since 2026).
-    runs-on: macos-26
+    runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"macos-26"') }}
     timeout-minutes: 60
+    env:
+      # Commit identity for the ios/<version> tag and vault pushes. Env, not `git config --global`,
+      # so a self-hosted Mac keeps its owner's own git identity.
+      GIT_AUTHOR_NAME: flutter-ship CI
+      GIT_AUTHOR_EMAIL: ci@users.noreply.github.com
+      GIT_COMMITTER_NAME: flutter-ship CI
+      GIT_COMMITTER_EMAIL: ci@users.noreply.github.com
     steps:
       - uses: actions/checkout@v4
 
+      # A self-hosted Mac uses the Xcode selected on it (xcode-select needs sudo there).
       - uses: maxim-lobanov/setup-xcode@v1
+        if: runner.environment == 'github-hosted'
         with:
           xcode-version: latest-stable
 
@@ -52,8 +69,7 @@ jobs:
           mkdir -p ~/.ship
           # Owner name and contact; a client vault may have none (ship.yml owner_name covers it).
           cp .ship/vault/config.yml ~/.ship/config.yml 2>/dev/null || true
-          git config --global user.name "flutter-ship CI"
-          git config --global user.email "ci@users.noreply.github.com"
+          xcodebuild -version
 
       - name: Flutter version from the repo
         id: flutter
@@ -66,9 +82,17 @@ jobs:
           cache: true
 
       - uses: ruby/setup-ruby@v1
+        if: runner.environment == 'github-hosted'
         with:
           ruby-version: '3.3'
           bundler-cache: true
+
+      # On the Mac: Homebrew's Ruby, gems kept outside the workspace (checkout wipes it).
+      - name: Ruby gems (self-hosted Mac)
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "BUNDLE_PATH=$HOME/.ship/gems/${GITHUB_REPOSITORY#*/}" >> "$GITHUB_ENV"
+          BUNDLE_PATH="$HOME/.ship/gems/${GITHUB_REPOSITORY#*/}" bundle install --jobs 4
 
       - name: fastlane ios ${{ inputs.lane }}
         run: bundle exec fastlane ios ${{ inputs.lane }}

@@ -128,6 +128,22 @@ products:
 - Verifying purchases is the app's job (its own server, or a service such as RevenueCat): the lane only manages
   the catalogue.
 
+## iOS builds on your own Mac
+
+Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`, which runs on GitHub's billed `macos-26` runners. To build on your own Mac instead (free, but the Mac must be on, awake and logged in), make it a self-hosted runner. On the Mac:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Yukisando/flutter-ship/main/scripts/mac-runner.sh
+bash mac-runner.sh tools               # once: checks Xcode, installs Homebrew, Ruby 3.3, gh, CocoaPods, jq
+bash mac-runner.sh add OWNER/REPO      # once per app: registers a runner, sets the IOS_RUNNER variable
+```
+
+`add` sets the repo variable `IOS_RUNNER` to `["self-hosted","macOS","flutter-ship"]`, which the workflow template reads for `runs-on`. Without the variable the workflow stays on GitHub's runners. `bash mac-runner.sh github OWNER/REPO` switches a repo back; `status` and `remove` do what they say. A personal account cannot share one runner between repos, so each app gets its own idle runner under `~/actions-runners/`.
+
+Apps made before this template need the new `ios-release.yml` (copy it from `templates/app/`), or their jobs ignore `IOS_RUNNER`.
+
+The Mac can also run the lanes directly (`bundle exec fastlane ios release` builds and uploads locally), but then it needs the vault checkout and passphrase itself. The runner gets both from the repo secrets on each run.
+
 ## CI (later)
 
 Set `SHIP_VAULT_PASSWORD` (and `SHIP_VAULT_DIR` to a checkout of the vault), give the job read access to the vault repo, and run `bundle exec fastlane android release`. Alternatively, set `SHIP_PLAY_JSON` to a key file path to bypass the vault for Play access.
