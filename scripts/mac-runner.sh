@@ -146,7 +146,7 @@ cmd_status() {
   for dir in "$RUNNERS"/*/; do
     [ -x "$dir/svc.sh" ] || continue
     printf '\n%s\n' "$dir"
-    (cd "$dir" && ./svc.sh status | grep -E 'Started|Stopped|not installed' || true)
+    (cd "$dir" && ./svc.sh status | grep -A1 -E 'Started|Stopped|not installed' || true)
   done
 }
 
