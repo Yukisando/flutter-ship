@@ -78,7 +78,27 @@ TXT
 }
 
 runner_version() {
-  gh api repos/actions/runner/releases/latest --jq .tag_name | sed 's/^v//'
+  curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1
+}
+
+# RUNNER_TOKEN (a registration or remove token made elsewhere, e.g. by flutter-ship on Windows)
+# wins; otherwise this Mac's own gh login asks GitHub for one.
+runner_token() {
+  local repo="$1" kind="$2"
+  if [ -n "${RUNNER_TOKEN:-}" ]; then echo "$RUNNER_TOKEN"; return; fi
+  command -v gh >/dev/null || die "no RUNNER_TOKEN and no gh: run 'bash mac-runner.sh tools' first"
+  gh api -X POST "repos/$repo/actions/runners/$kind-token" --jq .token
+}
+
+# The IOS_RUNNER variable needs this Mac's gh login; flutter-ship sets it itself before each build.
+set_variable() {
+  local repo="$1"
+  if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+    gh variable set IOS_RUNNER -R "$repo" --body '["self-hosted","macOS","flutter-ship"]'
+    echo "IOS_RUNNER = $(gh variable get IOS_RUNNER -R "$repo")"
+  else
+    echo "IOS_RUNNER not set from here (no gh login): flutter-ship sets it before each iOS build."
+  fi
 }
 
 cmd_add() {
@@ -86,7 +106,7 @@ cmd_add() {
   local name="${repo#*/}"
   local dir="$RUNNERS/$name"
   brew_env
-  command -v gh >/dev/null || die "run 'bash mac-runner.sh tools' first"
+  command -v brew >/dev/null || die "run 'bash mac-runner.sh tools' first"
 
   if [ ! -x "$dir/run.sh" ]; then
     say "Runner for $repo in $dir"
@@ -100,7 +120,7 @@ cmd_add() {
 
   say "Register with GitHub"
   local token
-  token="$(gh api -X POST "repos/$repo/actions/runners/registration-token" --jq .token)"
+  token="$(runner_token "$repo" registration)"
   (
     cd "$dir"
     # The service keeps the PATH captured here (.path): Homebrew, Ruby 3.3, its gem bin.
@@ -114,8 +134,7 @@ cmd_add() {
   )
 
   say "Send $repo's iOS builds to this Mac"
-  gh variable set IOS_RUNNER -R "$repo" --body '["self-hosted","macOS","flutter-ship"]'
-  echo "IOS_RUNNER = $(gh variable get IOS_RUNNER -R "$repo")"
+  set_variable "$repo"
   echo "Done. 'fastlane ios release' for $repo now builds on this Mac."
 }
 
@@ -154,7 +173,7 @@ cmd_remove() {
   [ -d "$dir" ] || die "no runner in $dir"
   gh variable delete IOS_RUNNER -R "$repo" 2>/dev/null || true
   local token
-  token="$(gh api -X POST "repos/$repo/actions/runners/remove-token" --jq .token)"
+  token="$(runner_token "$repo" remove)"
   (cd "$dir" && ./svc.sh stop || true; ./svc.sh uninstall || true; ./config.sh remove --token "$token")
   rm -rf "$dir"
   echo "Removed. $repo builds on GitHub's runners again."

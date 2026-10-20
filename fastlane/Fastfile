@@ -1154,7 +1154,9 @@ module Ship
   def register_mac_runner!(boot, slug)
     runs = "repos/#{boot}/actions/workflows/mac-runner.yml/runs?per_page=1"
     before = gh_json(runs)['workflow_runs'].first&.dig('id')
-    capture!('gh', 'workflow', 'run', 'mac-runner.yml', '-R', boot, '-f', "repo=#{slug}", '-f', 'action=add')
+    # The runner service on the Mac cannot use the Mac's own gh login, so the token comes from here.
+    token = capture!('gh', 'api', '-X', 'POST', "repos/#{slug}/actions/runners/registration-token", '--jq', '.token').strip
+    capture!('gh', 'workflow', 'run', 'mac-runner.yml', '-R', boot, '-f', "repo=#{slug}", '-f', 'action=add', '-f', "token=#{token}")
     run = nil
     40.times do
       sleep 3
