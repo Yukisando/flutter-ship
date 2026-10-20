@@ -22,6 +22,7 @@ require 'tmpdir'
 require 'fileutils'
 require 'socket'
 require 'time'
+require 'date'
 
 module Ship
   HOME = File.join(Dir.home, '.ship')
@@ -48,7 +49,7 @@ module Ship
   end
 
   def machine
-    @machine ||= File.exist?(CONFIG_FILE) ? (YAML.safe_load(File.read(CONFIG_FILE)) || {}) : {}
+    @machine ||= File.exist?(CONFIG_FILE) ? (YAML.safe_load(File.read(CONFIG_FILE), permitted_classes: [Date]) || {}) : {}
   end
 
   def app
@@ -1100,7 +1101,7 @@ module Ship
     return nil if ios['runner'].to_s == 'github'
     cfg = machine['mac_runner']
     vault_cfg = File.join(Vault.local_dir, 'config.yml')
-    cfg ||= (YAML.safe_load(File.read(vault_cfg)) || {})['mac_runner'] if File.exist?(vault_cfg)
+    cfg ||= (YAML.safe_load(File.read(vault_cfg), permitted_classes: [Date]) || {})['mac_runner'] if File.exist?(vault_cfg)
     cfg.is_a?(Hash) ? cfg : nil
   end
 
