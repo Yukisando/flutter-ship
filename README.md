@@ -130,19 +130,45 @@ products:
 
 ## iOS builds on your own Mac
 
-Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`, which runs on GitHub's billed `macos-26` runners. To build on your own Mac instead (free, but the Mac must be on, awake and logged in), make it a self-hosted runner. On the Mac:
+Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`. With `mac_runner:` in
+`config.yml` (the vault's copy counts) that workflow runs on your own Mac, a self-hosted GitHub
+runner: no billed minutes, but the Mac must be on, awake (on the charger it never sleeps) and
+logged in. Without `mac_runner:` it runs on GitHub's `macos-26` runners.
+
+```yaml
+mac_runner:
+  bootstrap_repo: Yukisando/ship-vault       # its runner registers app runners on the Mac
+  labels: [self-hosted, macOS, flutter-ship]
+```
+
+Once per Mac:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/Yukisando/flutter-ship/main/scripts/mac-runner.sh
-bash mac-runner.sh tools               # once: checks Xcode, installs Homebrew, Ruby 3.3, gh, CocoaPods, jq
-bash mac-runner.sh add-all Yukisando   # every flutter-ship app with an iOS workflow (or: add OWNER/REPO ...)
+bash mac-runner.sh tools                     # checks Xcode, installs Homebrew, Ruby 3.3, gh, CocoaPods, jq
+bash mac-runner.sh add Yukisando/ship-vault  # the bootstrap runner
 ```
 
-`add` sets the repo variable `IOS_RUNNER` to `["self-hosted","macOS","flutter-ship"]`, which the workflow template reads for `runs-on`. Without the variable the workflow stays on GitHub's runners. `bash mac-runner.sh github OWNER/REPO` switches a repo back; `status` and `remove` do what they say. A personal account cannot share one runner between repos, so each app gets its own idle runner under `~/actions-runners/`.
+After that nothing is done on the Mac by hand. Before each dispatch, `ios release` / `ios build` /
+`ios unity_release`:
 
-Apps made before this template need the new `ios-release.yml` (copy it from `templates/app/`), or their jobs ignore `IOS_RUNNER`.
+1. finds the app repo's runner on the Mac (labels above);
+2. if there is none, makes a registration token and starts the vault's `mac-runner.yml`, which runs
+   on the bootstrap runner and calls `mac-runner.sh add` for the app (about 30 s);
+3. stops with "the Mac is offline" when the runner is not online, instead of queueing forever;
+4. sets the repo variable `IOS_RUNNER`, which the workflow templates read for `runs-on`.
 
-The Mac can also run the lanes directly (`bundle exec fastlane ios release` builds and uploads locally), but then it needs the vault checkout and passphrase itself. The runner gets both from the repo secrets on each run.
+`bundle exec fastlane ios runner` does steps 1 to 4 without building. Opting out: `runner:github` on
+a lane for one build, `ios.runner: github` in ship.yml for one app, or remove `mac_runner:` for all.
+A personal GitHub account cannot share a runner between repos, so each app gets its own idle runner
+under `~/actions-runners/` on the Mac. On the Mac itself: `bash mac-runner.sh status`, `remove`,
+`github OWNER/REPO` (back to GitHub). Apps whose `ios-release.yml` predates `IOS_RUNNER` build on
+GitHub with a warning until the template is copied in.
+
+The runner service cannot read the Mac's own `gh` login from the keychain, so registration tokens
+always come from the machine that asks (`RUNNER_TOKEN`). The Mac can also run the lanes directly
+(`bundle exec fastlane ios release` builds and uploads locally) when it has the vault and its
+passphrase.
 
 ## CI (later)
 

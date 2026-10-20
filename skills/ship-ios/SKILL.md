@@ -1,13 +1,16 @@
 ---
 name: ship-ios
-description: Release a Flutter app to TestFlight / the App Store with flutter-ship - Apple keys in the vault, bundle id, certificate and profile through the App Store Connect API, build on a GitHub macOS runner, upload to TestFlight. Use when the user says ship, release, publish or upload the iOS / iPhone app, asks for a TestFlight build, or sets up Apple for an app.
+description: Release a Flutter app to TestFlight / the App Store with flutter-ship - Apple keys in the vault, bundle id, certificate and profile through the App Store Connect API, build on the owner's Mac (self-hosted runner) or a GitHub macOS runner, upload to TestFlight. Use when the user says ship, release, publish or upload the iOS / iPhone app, asks for a TestFlight build, or sets up Apple for an app.
 ---
 
 # Release to TestFlight
 
 `PLUGIN` is two folders above this file. `FL` = `SHIP_LOCAL=$PLUGIN bundle exec fastlane`. Run from the app root.
 iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the app's
-`.github/workflows/ios-release.yml` on a GitHub `macos-26` runner instead; follow it with `gh run watch`.
+`.github/workflows/ios-release.yml` instead: on the owner's Mac when `config.yml` has `mac_runner:` (the
+lane registers the app's runner there on first use and stops if the Mac is offline), else on a GitHub
+`macos-26` runner. Follow it with `gh run watch`. `$FL ios runner` shows where it will build;
+`runner:github` builds on GitHub once. README, "iOS builds on your own Mac".
 
 ## Default release
 
@@ -99,7 +102,11 @@ macOS runner as a zip on a draft GitHub release.
 ## Errors
 
 - **Invalid large app icon ... alpha channel**: flatten the AppIcon PNGs (no transparency).
-- **SDK version issue**: the runner's Xcode is too old for App Store Connect; use a newer `macos-*` image.
+- **SDK version issue**: the runner's Xcode is too old for App Store Connect: update Xcode on the Mac
+  (App Store), or use a newer `macos-*` image on GitHub.
+- **"The Mac is offline"**: wake it (charger, logged in), or `runner:github` for this build.
+- **`pod install` says the specs repository is too out-of-date**: the Mac workflow refreshes specs before
+  building; an app on an older `ios-release.yml` needs the current template.
 - **CocoaPods is installed but broken**: `cocoapods` missing from the Gemfile (flutter runs `pod` inside `bundle exec`).
 - **No app for <bundle id>**: create it in App Store Connect, then rerun.
 - **`ENTITY_ERROR.RELATIONSHIP.INVALID` on appAvailabilities**: Apple wants every territory in the request
