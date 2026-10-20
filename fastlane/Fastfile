@@ -1905,6 +1905,15 @@ platform :ios do
     end
   end
 
+  desc 'Show where this app builds iOS, and get it ready: on the Mac (config.yml mac_runner:) its runner is'
+  desc 'registered there on first use. runner:github sends it back to GitHub. ios release does this by itself'
+  lane :runner do |options|
+    workflow = File.join(Ship.root, '.github', 'workflows', Ship::IOS_WORKFLOW)
+    UI.user_error!("No .github/workflows/#{Ship::IOS_WORKFLOW}: copy it from flutter-ship's templates") unless File.exist?(workflow)
+    repo = Ship.capture!('git', '-C', Ship.root, 'remote', 'get-url', 'origin').strip
+    UI.success("iOS builds run on #{Ship.route_ios_runner!(Ship.repo_slug(repo), File.read(workflow), options[:runner])}")
+  end
+
   desc 'Print the version name and the next free build number'
   lane :version do
     Ship::Vault.sync!
