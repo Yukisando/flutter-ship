@@ -6,7 +6,7 @@
 #   bash mac-runner.sh tools                     # once: Homebrew tools, Xcode checks
 #   bash mac-runner.sh add OWNER/REPO [...]      # once per app repo: runner + IOS_RUNNER variable
 #   bash mac-runner.sh add-all OWNER             # every OWNER repo with fastlane/ship.yml and an iOS workflow
-#   bash mac-runner.sh status                    # what is installed and running
+#   bash mac-runner.sh status                    # each runner: service, process, GitHub (online, busy)
 #   bash mac-runner.sh remove OWNER/REPO         # unregister that repo's runner
 #   bash mac-runner.sh github OWNER/REPO         # send that repo back to GitHub's runners
 #
@@ -179,16 +179,73 @@ cmd_remove() {
   echo "Removed. $repo builds on GitHub's runners again."
 }
 
+# One runner's state, in words: the launchd service, the process, and what GitHub sees.
+# svc.sh's own status only greps `launchctl list`, which never says "running", lists a
+# loaded job whose process died under "Started:", and misses a runner started by ./run.sh.
+runner_status() {
+  local dir="$1" info name url repo label svc pid code proc gh_state busy
+  info="$(LC_ALL=C sed $'1s/^\xef\xbb\xbf//' "$dir/.runner" 2>/dev/null || true)" # .NET writes a BOM
+  name="$(printf '%s\n' "$info" | sed -n 's/.*"agentName": *"\([^"]*\)".*/\1/p' | head -1)"
+  url="$(printf '%s\n' "$info" | sed -n 's/.*"gitHubUrl": *"\([^"]*\)".*/\1/p' | head -1)"
+  repo="${url#https://github.com/}"
+  printf '\n%s  (%s)\n' "${repo:-$(basename "$dir")}" "$dir"
+  if [ -z "$name" ]; then
+    echo "  not configured: bash mac-runner.sh add OWNER/REPO"
+    return
+  fi
+
+  # The launchd label is the plist's name; svc.sh records the plist path in .service.
+  label=
+  if [ -s "$dir/.service" ]; then label="$(basename "$(cat "$dir/.service")" .plist)"; fi
+  [ -n "$label" ] || label="actions.runner.${repo/\//-}.$name"
+  label="${label// /_}"
+  if svc="$(launchctl print "gui/$(id -u)/$label" 2>/dev/null)"; then
+    pid="$(printf '%s\n' "$svc" | awk '$1 == "pid" {print $3; exit}')"
+    code="$(printf '%s\n' "$svc" | sed -n 's/^[[:space:]]*last exit code = //p' | head -1)"
+    if [ -n "$pid" ]; then echo "  service: running (pid $pid)"
+    else echo "  service: loaded but not running (last exit code ${code:-unknown})"; fi
+  elif [ -f "$HOME/Library/LaunchAgents/$label.plist" ]; then
+    echo "  service: installed but not loaded (log in on the Mac, or: cd $dir && ./svc.sh start)"
+  else
+    echo "  service: not installed (cd $dir && ./svc.sh install && ./svc.sh start)"
+  fi
+
+  proc="$(pgrep -f "$dir/bin/Runner.Listener" 2>/dev/null | head -1 || true)"
+  if [ -n "$proc" ]; then echo "  process: Runner.Listener running (pid $proc)"
+  else echo "  process: no Runner.Listener running from this folder"; fi
+
+  if ! command -v gh >/dev/null || ! gh auth status >/dev/null 2>&1; then
+    echo "  github: unknown (gh not logged in on this Mac)"
+    return
+  fi
+  gh_state="$(gh api "repos/$repo/actions/runners" \
+    --jq ".runners[] | select(.name == \"$name\") | \"\(.status) \(.busy)\"" 2>/dev/null || true)"
+  if [ -z "$gh_state" ]; then
+    echo "  github: $repo has no runner named $name (removed on GitHub? run add again)"
+    return
+  fi
+  busy="${gh_state#* }"
+  if [ "${gh_state%% *}" != online ]; then echo "  github: offline as $name"
+  elif [ "$busy" = true ]; then
+    echo "  github: online as $name, building:"
+    gh run list -R "$repo" --status in_progress -L 3 \
+      --json workflowName,displayTitle,url --jq '.[] | "    \(.workflowName): \(.displayTitle)  \(.url)"' \
+      2>/dev/null || true
+  else echo "  github: online as $name, idle (waiting for a job)"; fi
+}
+
 cmd_status() {
   brew_env
   xcodebuild -version 2>/dev/null | head -1 || echo "Xcode: not selected"
-  for t in brew gh pod; do printf '%-6s %s\n' "$t" "$(command -v $t || echo missing)"; done
+  for t in brew gh pod jq; do printf '%-6s %s\n' "$t" "$(command -v $t || echo missing)"; done
   [ -d "$RUNNERS" ] || { echo "No runners yet."; return; }
+  local dir found=
   for dir in "$RUNNERS"/*/; do
-    [ -x "$dir/svc.sh" ] || continue
-    printf '\n%s\n' "$dir"
-    (cd "$dir" && ./svc.sh status | grep -A1 -E 'Started|Stopped|not installed' || true)
+    [ -f "$dir/config.sh" ] || continue
+    found=1
+    runner_status "${dir%/}"
   done
+  [ -n "$found" ] || echo "No runners yet."
 }
 
 case "${1:-}" in
