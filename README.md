@@ -135,7 +135,7 @@ Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`, wh
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/Yukisando/flutter-ship/main/scripts/mac-runner.sh
 bash mac-runner.sh tools               # once: checks Xcode, installs Homebrew, Ruby 3.3, gh, CocoaPods, jq
-bash mac-runner.sh add OWNER/REPO      # once per app: registers a runner, sets the IOS_RUNNER variable
+bash mac-runner.sh add-all Yukisando   # every flutter-ship app with an iOS workflow (or: add OWNER/REPO ...)
 ```
 
 `add` sets the repo variable `IOS_RUNNER` to `["self-hosted","macOS","flutter-ship"]`, which the workflow template reads for `runs-on`. Without the variable the workflow stays on GitHub's runners. `bash mac-runner.sh github OWNER/REPO` switches a repo back; `status` and `remove` do what they say. A personal account cannot share one runner between repos, so each app gets its own idle runner under `~/actions-runners/`.

@@ -4,7 +4,8 @@
 # billed macOS runners.
 #
 #   bash mac-runner.sh tools                     # once: Homebrew tools, Xcode checks
-#   bash mac-runner.sh add OWNER/REPO            # once per app repo: runner + IOS_RUNNER variable
+#   bash mac-runner.sh add OWNER/REPO [...]      # once per app repo: runner + IOS_RUNNER variable
+#   bash mac-runner.sh add-all OWNER             # every OWNER repo with fastlane/ship.yml and an iOS workflow
 #   bash mac-runner.sh status                    # what is installed and running
 #   bash mac-runner.sh remove OWNER/REPO         # unregister that repo's runner
 #   bash mac-runner.sh github OWNER/REPO         # send that repo back to GitHub's runners
@@ -118,6 +119,27 @@ cmd_add() {
   echo "Done. 'fastlane ios release' for $repo now builds on this Mac."
 }
 
+# Every repo of OWNER that ships with flutter-ship and builds iOS in a workflow.
+cmd_add_all() {
+  local owner="${1:?usage: mac-runner.sh add-all OWNER}"
+  brew_env
+  local repos=() r
+  for r in $(gh repo list "$owner" --limit 200 --no-archived --json nameWithOwner --jq '.[].nameWithOwner'); do
+    gh api "repos/$r/contents/fastlane/ship.yml" --silent 2>/dev/null || continue
+    gh api "repos/$r/contents/.github/workflows/ios-release.yml" --silent 2>/dev/null || continue
+    repos+=("$r")
+  done
+  [ ${#repos[@]} -gt 0 ] || die "no flutter-ship repo with an iOS workflow under $owner"
+  say "flutter-ship repos with an iOS workflow: ${repos[*]}"
+  for r in "${repos[@]}"; do
+    if ! gh api "repos/$r/contents/.github/workflows/ios-release.yml" --jq .content | base64 -d | grep -q IOS_RUNNER; then
+      echo "SKIP $r: its ios-release.yml ignores IOS_RUNNER (copy flutter-ship's template first)"
+      continue
+    fi
+    cmd_add "$r"
+  done
+}
+
 cmd_github() {
   local repo="${1:?usage: mac-runner.sh github OWNER/REPO}"
   brew_env
@@ -152,7 +174,9 @@ cmd_status() {
 
 case "${1:-}" in
   tools) cmd_tools ;;
-  add) cmd_add "${2:-}" ;;
+  add) shift; [ $# -gt 0 ] || die "usage: mac-runner.sh add OWNER/REPO [OWNER/REPO ...]"
+       for r in "$@"; do cmd_add "$r"; done ;;
+  add-all) cmd_add_all "${2:-}" ;;
   remove) cmd_remove "${2:-}" ;;
   github) cmd_github "${2:-}" ;;
   status) cmd_status ;;
