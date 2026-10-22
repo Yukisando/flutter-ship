@@ -69,7 +69,7 @@ Console: https://play.google.com/console
 - [ ] **Other declarations**: Advertising ID <No>, Government app <No/Yes>, Financial features none, Health none, News <No>.
 - [ ] **Store settings**: category <category>, tags, contact email <email>, website <website>.
 - [ ] **Account deletion** (required when users can create accounts): URL <delete-account URL>
-- [ ] **Closed test** (only personal accounts created after 13 Nov 2023): 12+ testers opted in for 14 days before production access.
+- [ ] **Closed test** (only personal accounts created after 13 Nov 2023): 12+ testers opted in for 14 days before production access. Leave this line out for an organization account; the owner's own Play account is one, so its apps never need it.
 ```
 
 To fill the data safety answers, read the code: Firebase Auth (email, user IDs), Firestore fields, Analytics/Crashlytics, location, camera and photos, push tokens. When unsure, write "check:" plus the question rather than guessing.
