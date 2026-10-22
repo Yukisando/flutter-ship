@@ -128,6 +128,21 @@ products:
 - Verifying purchases is the app's job (its own server, or a service such as RevenueCat): the lane only manages
   the catalogue.
 
+### Keys for an app's backend (shared by every app)
+
+An app's server checks purchases with two shared keys, so a new app needs no new key and no new invite:
+
+- Play: the service account `play-purchases@coldsnap-ship.iam.gserviceaccount.com`, key in the vault at
+  `google-play/purchases`. Invited once in Play Console > Users and permissions with account-wide "View financial
+  data" and "Manage orders and subscriptions" only (not Admin). The backend reads it from a secret, e.g.
+  `PLAY_PURCHASES_KEY` (Seba: `functions/src/engine/purchases.ts`).
+- App Store: the In-App Purchase key "server", in the vault at `apple/iap/server.json.enc` (`APPLE_IAP_KEY` plus
+  its key id and issuer id).
+
+The Play account then holds: the owner's own Google accounts (Admin), `google-play/default` (the release key the
+lanes and agents use, Admin), and `play-purchases` (purchase checks). A backend's own Firebase or compute account
+is never invited.
+
 ## iOS builds on your own Mac
 
 Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`. With `mac_runner:` in
