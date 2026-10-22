@@ -611,7 +611,7 @@ module Ship
 
   def preflight!(metadata: true)
     errors, warnings = preflight
-    errors = errors.reject { |e| e.include?('/') } unless metadata
+    errors = errors.reject { |e| e.include?('/') || e.end_with?('no metadata folder') } unless metadata
     warnings.each { |w| UI.important(w) }
     errors.each { |e| UI.error(e) }
     UI.user_error!("Preflight found #{errors.size} problem(s)") unless errors.empty?
