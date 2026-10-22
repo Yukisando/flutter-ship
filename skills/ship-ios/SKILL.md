@@ -85,8 +85,8 @@ macOS runner as a zip on a draft GitHub release.
   price, availability. `$FL ios check fix:true` also sets the three the API allows from `ship.yml`
   (`ios.countries: [FRA]`, or `[FRA, ALL]` for every territory; the first code is the price base, free only; `ios.content_rights: third_party|none`).
   `build:N` picks that build for the version once Apple has processed it (state VALID).
-  App Privacy (data types) is not in Apple's API: the user publishes it by hand. Run it before telling the user
-  the app is ready to submit.
+  App Privacy (data types) is not in Apple's API: the ship-declare skill writes it through the user's signed-in
+  App Store Connect tab. Run `ios check` before telling the user the app is ready to submit.
 - App Review may answer "Guideline 2.1 - Information Needed" and ask for a screen recording from a physical device
   on the latest iOS, plus written answers. Name the device from `test_devices.ios` in `~/.ship/config.yml`, never a
   placeholder; ask the user to confirm the iOS version when `checked` is over a month old, then update the field and
@@ -94,8 +94,7 @@ macOS runner as a zip on a draft GitHub release.
   `$FL ios metadata` keeps them in the Notes field for later submissions.
 - Picking the build and Add for Review stay manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
   console steps in the app's `fastlane/STORE_SETUP_IOS.md`, click by click with the exact values to type:
-  APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), App Privacy (every data
-  type with purpose / linked / tracking, derived from the Play data safety answers), Content Rights, then the version:
+  APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), Content Rights, then the version:
   pick the build, "Sign-in required" (No when a guest mode exists, else a demo account kept out of git), manual
   release, Add for Review. Keep the Play guide (`fastlane/STORE_SETUP.md`) in the same style and tick what is done.
 

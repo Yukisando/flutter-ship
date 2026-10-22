@@ -501,6 +501,76 @@ module Ship
     UI.success('Contact details updated')
   end
 
+  # ---------------------------------------------------------------- declarations
+
+  # Store declarations (Data safety, App Privacy, content rating answers): <app>/fastlane/declarations.yml.
+  def declarations
+    @declarations ||= begin
+      path = File.join(fastlane_dir, 'declarations.yml')
+      UI.user_error!("Missing #{path}. The ship-init skill writes it from the code.") unless File.exist?(path)
+      YAML.safe_load(File.read(path)) || {}
+    end
+  end
+
+  # Play's Data safety form as the CSV that Play Console exports (App content > Data safety > Export to CSV),
+  # filled from declarations.yml. The blank export lives in templates/play: refresh it when Play adds questions.
+  DATA_DELETION = { 'yes' => 'DATA_DELETION_YES', 'no' => 'DATA_DELETION_NO', 'auto_90_days' => 'DATA_DELETION_NO_AUTO_DELETED' }.freeze
+
+  def data_safety_csv
+    require 'csv'
+    dir = ENV['SHIP_LOCAL'].to_s
+    template = File.join(dir, 'templates', 'play', 'data_safety_template.csv')
+    UI.user_error!('Set SHIP_LOCAL to the flutter-ship checkout (it holds the Data safety template)') unless !dir.empty? && File.exist?(template)
+    ds = declarations['data_safety'] || UI.user_error!('declarations.yml has no data_safety section')
+    data = ds['data'] || {}
+    answers = {}
+    put = ->(question, response, value) { answers[[question, response.to_s]] = value }
+    put.('PSL_DATA_COLLECTION_COLLECTS_PERSONAL_DATA', nil, data.any? ? 'TRUE' : 'FALSE')
+    if data.any?
+      put.('PSL_DATA_COLLECTION_ENCRYPTED_IN_TRANSIT', nil, ds.fetch('encrypted_in_transit', true) ? 'TRUE' : 'FALSE')
+      methods = Array(ds['account_creation'])
+      methods = ['NONE'] if methods.empty?
+      methods.each { |m| put.('PSL_SUPPORTED_ACCOUNT_CREATION_METHODS', "PSL_ACM_#{m}", 'TRUE') }
+      put.('PSL_ACM_SPECIFY', nil, ds['account_creation_other']) if methods.include?('OTHER')
+      put.('PSL_ACCOUNT_DELETION_URL', nil, ds['account_deletion_url']) unless methods == ['NONE']
+      answer = ds.fetch('data_deletion', 'yes')
+      deletion = DATA_DELETION[{ true => 'yes', false => 'no' }.fetch(answer, answer.to_s)] ||UI.user_error!("data_deletion: #{DATA_DELETION.keys.join(' | ')}")
+      put.('PSL_SUPPORT_DATA_DELETION_BY_USER', deletion, 'TRUE')
+      put.('PSL_DATA_DELETION_URL', nil, ds['data_deletion_url']) if ds['data_deletion_url']
+    end
+    rows = CSV.read(template)
+    types = rows.drop(1).select { |q, _| q.start_with?('PSL_DATA_TYPES_') }.to_h { |q, r| [r, q] }
+    data.each do |type, d|
+      id = "PSL_#{type}"
+      UI.user_error!("declarations.yml: unknown data type #{type} (see the PSL_DATA_TYPES_ rows of #{template})") unless types[id]
+      put.(types[id], id, 'TRUE')
+      usage = "PSL_DATA_USAGE_RESPONSES:#{id}"
+      collected = Array(d['collected'])
+      shared = Array(d['shared'])
+      put.("#{usage}:PSL_DATA_USAGE_COLLECTION_AND_SHARING", 'PSL_DATA_USAGE_ONLY_COLLECTED', 'TRUE') if collected.any?
+      put.("#{usage}:PSL_DATA_USAGE_COLLECTION_AND_SHARING", 'PSL_DATA_USAGE_ONLY_SHARED', 'TRUE') if shared.any?
+      if collected.any?
+        put.("#{usage}:PSL_DATA_USAGE_EPHEMERAL", nil, d['ephemeral'] ? 'TRUE' : 'FALSE')
+        control = d['required'] ? 'PSL_DATA_USAGE_USER_CONTROL_REQUIRED' : 'PSL_DATA_USAGE_USER_CONTROL_OPTIONAL'
+        put.("#{usage}:DATA_USAGE_USER_CONTROL", control, 'TRUE')
+      end
+      collected.each { |p| put.("#{usage}:DATA_USAGE_COLLECTION_PURPOSE", "PSL_#{p}", 'TRUE') }
+      shared.each { |p| put.("#{usage}:DATA_USAGE_SHARING_PURPOSE", "PSL_#{p}", 'TRUE') }
+    end
+    used = []
+    out = CSV.generate do |csv|
+      csv << rows.first
+      rows.drop(1).each do |row|
+        key = [row[0], row[1].to_s]
+        used << key if answers.key?(key)
+        csv << [row[0], row[1], answers[key], *row[3..]]
+      end
+    end
+    missing = answers.keys - used
+    UI.user_error!("Not in the Data safety template: #{missing.map { |k| k.reject(&:empty?).join(' / ') }.join(', ')}") if missing.any?
+    out
+  end
+
   # ---------------------------------------------------------------- build
 
   def build_aab(name, code)
@@ -1603,6 +1673,22 @@ platform :android do
       )
       Ship.update_details(json_key)
     end
+  end
+
+  desc 'Send the Data safety form from fastlane/declarations.yml (dry:true only writes fastlane/data_safety.csv)'
+  lane :data_safety do |options|
+    csv = Ship.data_safety_csv
+    if options[:dry]
+      path = File.join(Ship.fastlane_dir, 'data_safety.csv')
+      File.write(path, csv)
+      next UI.message("Wrote #{path}")
+    end
+    Ship::Vault.sync!
+    Ship.with_play_key do |json_key|
+      request = Google::Apis::AndroidpublisherV3::SafetyLabelsUpdateRequest.new(safety_labels: csv)
+      Ship.play_client(json_key).client.data_application_safety(Ship.package, request)
+    end
+    UI.success('Data safety sent. It shows under App content > Data safety; send it for review from Publishing overview.')
   end
 
   desc 'Show what is on each Play track'

@@ -50,7 +50,9 @@ Then run `... android doctor`.
 
 ## 5. Play Console checklist
 
-Write `fastlane/STORE_SETUP.md` from the template below. Fill in the real values. A filled value saves the user from thinking. Steps that only exist in the Play Console UI cannot be automated, so make each step paste-ready.
+Write `fastlane/declarations.yml` (the store declarations: Data safety, App Privacy, App content answers) as the ship-declare skill describes. Once the app exists in Play Console, ship-declare fills those forms; they are no longer manual steps.
+
+Write `fastlane/STORE_SETUP.md` from the template below for what stays manual. Fill in the real values. A filled value saves the user from thinking. Make each step paste-ready.
 
 ```markdown
 # <App> - Google Play setup (one time)
@@ -60,19 +62,12 @@ Console: https://play.google.com/console
 - [ ] **Create the app**: Home > Create app. Name: <app_name>. Default language: <default locale>. App. Free. Tick both declarations.
 - [ ] **First bundle** (Google only lets the API manage an app after one manual upload): run `bundle exec fastlane android build`, then Test and release > Testing > Internal testing > Create new release > keep "Use Google-generated key" > upload `build/app/outputs/bundle/release/app-release.aab` > Save. From then on: `bundle exec fastlane android release`.
 - [ ] **Internal testers**: Internal testing > Testers > add an email list (yourself at least).
-- [ ] **Privacy policy**: App content > Privacy policy: <privacy_url>
-- [ ] **App access**: <"All functionality is available without restrictions" | demo account: email + password + notes>
-- [ ] **Ads**: <Yes/No>
-- [ ] **Content rating**: questionnaire, category "All Other App Types" (or Game). Email: <contact email>. <answers: violence none, user interaction yes/no, shares location yes/no, digital purchases yes/no>
-- [ ] **Target audience**: <age groups>. Appeals to children: <No>
-- [ ] **Data safety**: <one line per data type collected: purpose, optional/required, encrypted in transit yes, deletion request URL>
-- [ ] **Other declarations**: Advertising ID <No>, Government app <No/Yes>, Financial features none, Health none, News <No>.
-- [ ] **Store settings**: category <category>, tags, contact email <email>, website <website>.
-- [ ] **Account deletion** (required when users can create accounts): URL <delete-account URL>
+- [ ] **App content and Data safety**: filled by Claude from `fastlane/declarations.yml` (ship-declare), once the app exists.
+- [ ] **Sign in details** (only when a feature needs an account): App content > Sign in details > a demo account the reviewers can use. You type the password; keep it out of git.
 - [ ] **Closed test** (only personal accounts created after 13 Nov 2023): 12+ testers opted in for 14 days before production access. Leave this line out for an organization account; the owner's own Play account is one, so its apps never need it.
 ```
 
-To fill the data safety answers, read the code: Firebase Auth (email, user IDs), Firestore fields, Analytics/Crashlytics, location, camera and photos, push tokens. When unsure, write "check:" plus the question rather than guessing.
+To fill declarations.yml, read the code: Firebase Auth (email, user IDs, guest mode), Firestore fields, Analytics/Crashlytics, location, camera and photos, push tokens. Ask the user the content questions (violence, nudity, loot boxes) rather than guessing.
 
 ## 6. Finish
 

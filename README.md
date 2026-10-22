@@ -92,6 +92,7 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `android build` | signed `.aab` only (first manual upload) |
 | `android promote [from:] [to:] [status:] [rollout:] [version_code:]` | move a release between tracks, draft on production by default |
 | `android metadata` | listing text, images, contact details |
+| `android data_safety` | Data safety form from `fastlane/declarations.yml` (`dry:true`: CSV only) |
 | `android status` | releases on each track |
 | `android version` | next version name and code |
 | `android keystore [import:path] [alias:]` | create or import the upload key into the vault |
