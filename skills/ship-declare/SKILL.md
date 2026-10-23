@@ -107,6 +107,11 @@ Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, lis
   user's permission rule for it, Claude runs `$FL apns_p8 out:<scratch>/AuthKey_<id>.p8`, uploads it with
   `file_upload` in the dialog (Key ID and team come from the lane output), and deletes the file at once. Without
   that rule the vault read is refused, and it stays a You step. Never print or paste the key. Record `apns_key`.
+  Tried 2026-10-23: the dialog's Browse opens the OS file picker straight away (no `<input type=file>` in the page or
+  a shadow root, and hooking createElement or `showOpenFilePicker` caught nothing), so `file_upload` has no target and
+  it stays a **You** step: upload the .p8 (Key ID 57MMKAKCLS, team 7LX2P3K976) by hand, then Claude checks and
+  records it. Don't decrypt the key for it. The permission rule must be `Bash(bundle exec fastlane apns_p8:*)`
+  (a bare command string is not a rule). The lane writes only into an existing folder: `mkdir -p` first.
 - Budget alert (Claude): `$FL budget_alert` (amount:10). Firebase already makes a 1-unit "Firebase Project <id>"
   budget when a project moves to Blaze, so the lane usually only confirms it; ship_status reads budgets live. The
   Budget API is billed to the app's project and is off there at first: the lane turns it on (serviceusage) and waits.
