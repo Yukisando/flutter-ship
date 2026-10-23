@@ -1490,6 +1490,7 @@ module Ship
     'ios_app_privacy' => 'Claude writes the answers (ship-declare); you click Publish in App Store Connect > App Privacy',
     'apns_key' => 'You (Claude once you allow it to run `apns_p8`): Firebase > Project settings > Cloud Messaging > Apple app > ' \
                   'Production APNs auth key > Upload the team key (vault apple/<team>/apns; ship-declare)',
+    'appcheck_ios' => 'App Attest only: Claude reads Firebase > App Check > the iOS app in the console and records it when it says Registered',
     'budget_alert' => 'Claude: `budget_alert` lane (Cloud Billing API, email alerts only, no cap)'
   }.freeze
 
@@ -1703,7 +1704,9 @@ module Ship
           dc = app_check("apps/#{firebase['ios']}/deviceCheckConfig")
           next NO_APP_CHECK unless dc
           next app_not_found('iOS') if dc == :not_found
-          dc['keyId'] ? [:ok, "DeviceCheck key #{dc['keyId']}"] : [:todo, 'no DeviceCheck key']
+          next [:ok, "DeviceCheck key #{dc['keyId']}"] if dc['keyId']
+          # App Attest registrations do not show in the API: they are checked in the console and recorded.
+          done['appcheck_ios'] ? [:ok, "App Attest, checked in console #{done['appcheck_ios']}"] : [:todo, 'no DeviceCheck key']
         end
         add.call('apns_key', 'Security', 'APNs key in Firebase (iOS push)') { push ? recorded.call('apns_key') : :na } if push
       end
