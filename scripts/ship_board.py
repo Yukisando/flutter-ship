@@ -19,6 +19,24 @@ import yaml
 
 PLUGIN = pathlib.Path(__file__).resolve().parent.parent
 
+# What each step waits for (same app), so the board can rank the quick steps that unblock the most work.
+AFTER = {
+    "play_production": ["play_app", "play_data_safety", "play_app_content", "play_store_settings"],
+    "play_data_safety": ["play_app"], "play_app_content": ["play_app"], "play_store_settings": ["play_app"],
+    "play_integrity_link": ["play_app"], "appcheck_android": ["play_app"],
+    "ios_app_privacy": ["ios_app"], "ios_live": ["ios_app", "ios_app_privacy"],
+    "appcheck_enforced": ["appcheck_android", "appcheck_ios"],
+    "appcheck_functions": ["appcheck_android", "appcheck_ios"],
+}
+# Rough minutes a step takes Nathan by hand (the board's "today" list shows the quick ones first).
+MINUTES = {"play_app": 20, "ios_app": 5, "ios_app_privacy": 1, "appcheck_ios": 10, "apns_key": 5, "budget_alert": 3}
+# Who acts. Steps whose how text says "You:" are Nathan's; App Privacy waits on his Publish click.
+YOURS = {"ios_app_privacy"}
+
+
+def who(step: str, how: str) -> str:
+    return "you" if step in YOURS or how.startswith("You") else "claude"
+
 
 def projects_dir() -> pathlib.Path:
     config = pathlib.Path.home() / ".ship" / "config.yml"
@@ -58,6 +76,8 @@ def main() -> None:
                 "app": report["app"], "folder": report["folder"], "checked_at": report["checked_at"],
                 "group": item["group"], "step": item["id"], "title": item["title"], "state": item["state"],
                 "detail": item.get("detail") or "", "how": item.get("how") or "",
+                "who": who(item["id"], item.get("how") or ""), "after": ",".join(AFTER.get(item["id"], [])),
+                "minutes": MINUTES.get(item["id"], 5),
             })
         print(f"{app.name}: {report['ok']}/{report['total']}")
     pathlib.Path(args.out).write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")

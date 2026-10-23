@@ -37,6 +37,13 @@ The dashboard is a Dashboard artifact; its link is `ship_board_url` in `~/.ship/
    `source.name` and `updated: {at, by: "ship_board.py"}`. The page itself does not change.
 3. Say in a few lines which apps are all green and the open steps worth doing today, `You:` ones first.
 
+The page has a **Today** list: Nathan's open steps whose own prerequisites are done, ranked by how many open
+steps of the same app wait on them, then by minutes. The order and the minutes live in `ship_board.py`
+(`AFTER`, `MINUTES`, `YOURS`): add a new step there when you add one to the lane. The Open steps table filters by
+app and by Yours / Claude's. Nathan never ticks anything on the board. When he says he did a step, check it
+(rerun `ship_status`; for a recorded step, look in the console or API first, then `done:<step>`), refresh
+the board, and update the skill if the step taught something.
+
 If `ship_board_url` is missing, the board does not exist yet: create it from the Dashboard type
 (Artifact quickstart, intent `other`), with a `steps` dataset (the JSON above, attached file) and a page
 that shows each app's progress and the open steps, then save its url as `ship_board_url`.
