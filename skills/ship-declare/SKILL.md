@@ -137,3 +137,34 @@ steps in the app dashboard") until the dashboard's "Create and publish a release
 - Preview and confirm: Production > Releases > Edit release > Next > (read errors with `text()`) > Save.
 Then Publishing overview runs quick checks (up to ~15 minutes) before "Send changes for review" unlocks. Sending
 reaches real users after Google's review: do it only on the user's explicit go.
+Order matters (Seba, 2026-10-23): do Edit release > Next > Save first, then the countries. With managed publishing
+off, saving the countries sends them (and any pending App content change) for review at once, and the release
+draft then has to join that review: Publishing overview > "Submit 1 change for review" opens "Do you want to
+restart your review?". Restart only when that review is the one just started in this session (its date is today
+and you made it); never restart a review that was already waiting, it puts the app back at the end of the queue.
+
+## 6. App Store submission and App Privacy Publish (on the user's go)
+
+- App Privacy Publish: `/apps/<apple id>/distribution/privacy` > Publish (`find` "Publish button") > Publish in the
+  confirm dialog. Check with `/iris/v1/apps/<id>/dataUsagePublishState` (`published: true`). Record `ios_app_privacy`.
+- Add for Review: `$FL ios check build:<n>` first (it must print no missing item), then
+  `/apps/<apple id>/distribution/ios/version/inflight` > Add for Review (top right) > the Draft Submission panel
+  lists the version > Submit for Review > "1 Item Submitted". `ios status` then shows WAITING_FOR_REVIEW.
+- Never on an app whose version is already WAITING_FOR_REVIEW or IN_REVIEW: a new version, another build, a
+  metadata save or a resubmission there can cancel the review. Read `ios status` first.
+- Sign-in for review with a demo account: the user types the password in App Store Connect > App Review
+  Information (or keeps it in the gitignored `review_information/demo_*.txt` for `ios metadata`); Claude never types it.
+
+## 7. App Check enforcement (on the user's go, per app and per service)
+
+Enforce a service only if all hold, else hold it back and say why:
+- every production build people run sends tokens: Play production and the App Store build (live or in review)
+  contain the `FirebaseAppCheck.instance.activate` commit (`git merge-base --is-ancestor <commit> <release tag>`);
+- every platform is registered (App Check > Apps shows no "Register remaining apps" banner): an unregistered iOS
+  app (no DeviceCheck key) gets no valid token, so enforcement locks iOS out;
+- no web client is served without App Check (a `kIsWeb` skip plus a live `*.web.app` means hold);
+- App Check > APIs (`/u/<n>/project/<id>/appcheck/products`, the owner account) shows mostly verified requests;
+  "Metrics will be displayed when ..." means no data yet: hold;
+- the user's debug builds have their debug tokens in App Check > Apps > Manage debug tokens.
+Functions: `ENFORCE_APP_CHECK=true` in `functions/.env`, deploy with `FUNCTIONS_DISCOVERY_TIMEOUT=60` and the app's
+own gcloud quota project.

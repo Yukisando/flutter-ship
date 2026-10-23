@@ -23,6 +23,11 @@ If `fastlane/ship.yml` is missing, follow ship-init first.
 
 A build takes several minutes. Run it in the background and wait.
 
+Uncommitted work in progress the user did not ask to ship: build from a clean worktree of HEAD instead of the
+checkout (`git worktree add --detach <scratch>/rel HEAD`). It needs the app's gems: on Windows make a junction
+`<scratch>/rel/vendor` -> `<app>/vendor` (copying `.bundle` alone is not enough), then run the lane there and remove
+the worktree. The tag is pushed from the worktree as usual.
+
 ## Other requests
 
 | User asks | Command |

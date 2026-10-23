@@ -1487,7 +1487,7 @@ module Ship
     'play_store_settings' => 'Claude: ship-declare sets category and tags (Store settings)',
     'play_integrity_link' => 'Claude in the browser (ship-declare), or you: Play Console > Protected with Play > Play Integrity API > ' \
                              'link the Firebase Cloud project. A 403 means the Play Console account has no IAM role on that project',
-    'ios_app_privacy' => 'Claude writes the answers (ship-declare); you click Publish in App Store Connect > App Privacy',
+    'ios_app_privacy' => 'Claude writes the answers and, on your go, clicks Publish in App Store Connect > App Privacy (ship-declare 2 and 6)',
     'apns_key' => 'You: Firebase > Project settings > Cloud Messaging > Apple app > Production APNs auth key > Upload the team .p8 ' \
                   '(Key ID and team: `vault_list`); the picker is the OS one, so Claude cannot attach the file. Then tell Claude',
     'appcheck_ios' => 'App Attest only: Claude reads Firebase > App Check > the iOS app in the console and records it when it says Registered',

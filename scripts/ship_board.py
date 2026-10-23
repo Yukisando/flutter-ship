@@ -30,8 +30,8 @@ AFTER = {
 }
 # Rough minutes a step takes Nathan by hand (the board's "today" list shows the quick ones first).
 MINUTES = {"play_app": 20, "ios_app": 5, "ios_app_privacy": 1, "appcheck_ios": 10, "apns_key": 5, "budget_alert": 3}
-# Who acts. Steps whose how text says "You:" are Nathan's; App Privacy waits on his Publish click.
-YOURS = {"ios_app_privacy"}
+# Who acts. Steps whose how text says "You:" are Nathan's.
+YOURS: set[str] = set()
 
 
 def who(step: str, how: str) -> str:
