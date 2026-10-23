@@ -88,17 +88,39 @@ Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, lis
 - Android: Firebase console > App Check > the Android app > Play Integrity: the **app signing** SHA-256 from Play
   Console > Test and release > App signing (`.../keymanagement`; the page's first fingerprint, not the upload key),
   tick the terms, Save. Claude can do this in the browser; the fingerprint is read, never typed by guess.
-- Play Console > Protected with Play (`.../protect-with-play`) > Play Integrity API > Get started > link the
-  Firebase Cloud project. Record `play_integrity_link`.
-- iOS: the app's code picks the provider (`AppleDeviceCheckProvider` or App Attest). DeviceCheck needs a key with
-  DeviceCheck enabled (Apple Developer > Keys, the user creates or edits it, one key can also carry APNs), uploaded
-  in Firebase > App Check > the iOS app > DeviceCheck with its Key ID and team. The .p8 never goes in chat.
-- Push apps: the APNs key in Firebase > Project settings > Cloud Messaging (vault `apple/<team>/apns`). Record `apns_key`.
-- Budget alert: Google Cloud > Billing > Budgets & alerts, a small monthly budget on the project. Record `budget_alert`.
+- Play Integrity link (Claude, browser): `.../app/<app id>/protect-with-play` > Play Integrity API > Get started
+  (lands on `.../app-integrity/integrity-api-settings`) > Link Cloud project > "Enter project number manually" > the
+  `project_number` from `android/app/google-services.json` > Link project. The dropdown lists only projects the
+  Play account can see. The dialog stays open on failure without a message: read the result with
+  `read_network_requests` (`integrityApiLinkedCloudProjects:link`). 403 = the Play Console Google account has no IAM
+  role on that Cloud project (it happens when Firebase lives on another Google account): the user grants it in
+  Google Cloud > IAM, Claude does not change IAM. Record `play_integrity_link`.
+- iOS (DeviceCheck): one key per Apple team, made once by the user: Apple Developer > Keys > + > tick DeviceCheck
+  (Apple keys never gain a service later, and the .p8 downloads only once), then
+  `$FL vault_add_devicecheck_key path:AuthKey_X.p8 team_id:` and delete the file. After that each app is a Claude
+  step: `$FL appcheck_ios` sends the vault key to Firebase App Check (`deviceCheckConfig` PATCH, nothing printed).
+  The app's code must use `AppleDeviceCheckProvider` (or `AppleProvider.deviceCheck` in firebase_app_check 0.3).
+  App Attest registrations do not show in the API, so ship_status only sees DeviceCheck.
+- Push apps: the team APNs key in Firebase > Project settings > Cloud Messaging
+  (`console.firebase.google.com/u/<n>/project/<id>/settings/cloudmessaging`; `u/<n>` is the Google account that
+  owns the project, try u/0 then u/1) > Apple app > Production APNs auth key > Upload. There is no API. With the
+  user's permission rule for it, Claude runs `$FL apns_p8 out:<scratch>/AuthKey_<id>.p8`, uploads it with
+  `file_upload` in the dialog (Key ID and team come from the lane output), and deletes the file at once. Without
+  that rule the vault read is refused, and it stays a You step. Never print or paste the key. Record `apns_key`.
+- Budget alert (Claude): `$FL budget_alert` (amount:10). Firebase already makes a 1-unit "Firebase Project <id>"
+  budget when a project moves to Blaze, so the lane usually only confirms it; ship_status reads budgets live. The
+  Budget API is billed to the app's project and is off there at first: the lane turns it on (serviceusage) and waits.
+  Email alerts to billing admins at 50/90/100 %, never a cap. Console: `console.cloud.google.com/billing/<acct>/budgets`.
+- App Privacy state (Claude, read only): in any App Store Connect tab, `/iris/v1/apps?filter[bundleId]=<bundle>` for
+  the id, then `/iris/v1/apps/<id>/dataUsages?limit=500` (rows) and `/iris/v1/apps/<id>/dataUsagePublishState`
+  (`published`). Compare the rows to `app_privacy:` before running apple_privacy.js (it deletes and rewrites), and
+  record `ios_app_privacy` when `published` is true. Publish itself stays the user's click.
+- Before filling Play forms, open App content > Actioned: forms done earlier are listed there with their date.
 - Enforcement (Firestore, Storage, Authentication in App Check > APIs; `enforceAppCheck` on Functions callables) comes
   last, on the user's go, once the release that sends tokens is what users run: see ship-status.
 - Release builds must activate App Check with the real providers and debug builds with the debug ones
-  (`AndroidDebugProvider`, `AppleDebugProvider`), whose tokens go in App Check > Manage debug tokens.
+  (`AndroidDebugProvider`, `AppleDebugProvider`), whose tokens go in App Check > Manage debug tokens. Phones only:
+  skip web (no reCAPTCHA key) and desktop, and wrap `activate` in try/catch so a failure never blocks startup.
 
 ## 5. First production release (when the user asks to go live)
 

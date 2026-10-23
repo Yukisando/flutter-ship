@@ -700,6 +700,7 @@ end
 # Vault layout:
 #   apple/asc/<name>.json.enc            App Store Connect API key {key_id, issuer_id, key}
 #   apple/<team>/apns.json.enc           APNs auth key {key_id, team_id, key}
+#   apple/<team>/devicecheck.json.enc    DeviceCheck key for Firebase App Check {key_id, team_id, key}
 #   apple/<team>/distribution.json.enc   Apple Distribution certificate {id, key_pem, cert_der, expires}
 #   apple/profiles/<bundle>.json.enc     App Store profile {id, uuid, name, content, expires}
 
@@ -737,6 +738,7 @@ module Ship
 
     def asc_key_path(name) = "apple/asc/#{name}.json.enc"
     def apns_key_path(team) = "apple/#{team}/apns.json.enc"
+    def devicecheck_key_path(team) = "apple/#{team}/devicecheck.json.enc"
     def distribution_path(team) = "apple/#{team}/distribution.json.enc"
     def profile_path(bundle) = "apple/profiles/#{bundle}.json.enc"
   end
@@ -1483,10 +1485,12 @@ module Ship
     'play_data_safety' => 'Claude: `android data_safety` (ship-declare)',
     'play_app_content' => 'Claude: ship-declare fills App content in Play Console',
     'play_store_settings' => 'Claude: ship-declare sets category and tags (Store settings)',
-    'play_integrity_link' => 'Claude in the browser, or you: Play Console > Protected with Play > Play Integrity API > link the Firebase Cloud project',
+    'play_integrity_link' => 'Claude in the browser (ship-declare), or you: Play Console > Protected with Play > Play Integrity API > ' \
+                             'link the Firebase Cloud project. A 403 means the Play Console account has no IAM role on that project',
     'ios_app_privacy' => 'Claude writes the answers (ship-declare); you click Publish in App Store Connect > App Privacy',
-    'apns_key' => 'You: Firebase > Project settings > Cloud Messaging > Apple app > APNs Authentication Key (vault apple/<team>/apns)',
-    'budget_alert' => 'You: Google Cloud > Billing > Budgets & alerts > a budget on this project (e.g. 10 EUR)'
+    'apns_key' => 'You (Claude once you allow it to run `apns_p8`): Firebase > Project settings > Cloud Messaging > Apple app > ' \
+                  'Production APNs auth key > Upload the team key (vault apple/<team>/apns; ship-declare)',
+    'budget_alert' => 'Claude: `budget_alert` lane (Cloud Billing API, email alerts only, no cap)'
   }.freeze
 
   def done_path = File.join(fastlane_dir, DONE_FILE)
@@ -1526,12 +1530,18 @@ module Ship
   end
 
   # Google API call with the user's Application Default Credentials, billed to the app's own project.
-  def gcp_get(url)
+  def gcp_get(url) = gcp_request(Net::HTTP::Get, url)
+
+  def gcp_request(verb, url, body = nil)
     @gcp_token ||= capture!('gcloud', 'auth', 'application-default', 'print-access-token').strip
     uri = URI(url)
-    req = Net::HTTP::Get.new(uri)
+    req = verb.new(uri)
     req['Authorization'] = "Bearer #{@gcp_token}"
     req['x-goog-user-project'] = firebase['project']
+    if body
+      req['Content-Type'] = 'application/json'
+      req.body = JSON.generate(body)
+    end
     res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
     # A Google API never turned on in this project answers 403 SERVICE_DISABLED: nothing was ever set up there.
     return nil if res.code == '403' && res.body.to_s.include?('SERVICE_DISABLED')
@@ -1556,6 +1566,39 @@ module Ship
   def android_sha256?
     certs = gcp_get("https://firebase.googleapis.com/v1beta1/projects/#{firebase['project']}/androidApps/#{firebase['android']}/sha")
     certs.is_a?(Hash) && (certs['certificates'] || []).any? { |c| c['certType'] == 'SHA_256' }
+  end
+
+  def project_number
+    @project_number ||= gcp_get("https://firebase.googleapis.com/v1beta1/projects/#{firebase['project']}")['projectNumber']
+  end
+
+  # The billing account paying for the project ("billingAccounts/XXXXXX-XXXXXX-XXXXXX"), nil on the free plan,
+  # :off while the Cloud Billing API is off in the project.
+  def billing_account
+    info = gcp_get("https://cloudbilling.googleapis.com/v1/projects/#{firebase['project']}/billingInfo")
+    return :off unless info.is_a?(Hash)
+    info['billingEnabled'] ? info['billingAccountName'] : nil
+  end
+
+  # Budgets on the billing account that cover this project (Firebase's own "Firebase Project <id>" ones count).
+  # nil while the Budget API is off in the app's project (the calls are billed there); the budget_alert lane turns it on.
+  def project_budgets(account)
+    budgets = gcp_get("https://billingbudgets.googleapis.com/v1/#{account}/budgets")
+    return nil unless budgets.is_a?(Hash)
+    (budgets['budgets'] || [])
+      .select { |b| (b.dig('budgetFilter', 'projects') || []).include?("projects/#{project_number}") }
+  end
+
+  # Live budget check. nil when the billing APIs cannot be read (the recorded step is used instead).
+  def budget_alert_state
+    account = billing_account or return [:na, 'no billing account (Spark plan)']
+    return nil if account == :off
+    budgets = project_budgets(account) or return nil
+    return [:todo, "no budget on this project (#{account.split('/').last})"] if budgets.empty?
+    money = budgets.first.dig('amount', 'specifiedAmount') || {}
+    [:ok, "#{budgets.first['displayName']}: #{money['units'] || '?'} #{money['currencyCode']}/month"]
+  rescue StandardError
+    nil
   end
 
   # Functions enforce App Check when a callable says enforceAppCheck: true, or when the
@@ -1655,7 +1698,8 @@ module Ship
       add.call('play_integrity_link', 'Security', 'Play Integrity linked to the Cloud project') { recorded.call('play_integrity_link') }
       if app['ios'] && firebase['ios']
         add.call('appcheck_ios', 'Security', 'App Check: iOS registered (DeviceCheck / App Attest)',
-                 'You: Apple Developer > Keys > a key with DeviceCheck; Firebase > App Check > iOS app > DeviceCheck: the .p8, its Key ID and the team') do
+                 'You once per team: Apple Developer > Keys > + > DeviceCheck, download the .p8, `vault_add_devicecheck_key`; ' \
+                 'then Claude: `appcheck_ios` lane (App Check API)') do
           dc = app_check("apps/#{firebase['ios']}/deviceCheckConfig")
           next NO_APP_CHECK unless dc
           next app_not_found('iOS') if dc == :not_found
@@ -1679,7 +1723,7 @@ module Ship
                'Claude: enforceAppCheck on every callable, deploy once the apps send tokens') do
         functions_enforcement || :na
       end
-      add.call('budget_alert', 'Security', 'Billing budget alert') { recorded.call('budget_alert') }
+      add.call('budget_alert', 'Security', 'Billing budget alert') { budget_alert_state || recorded.call('budget_alert') }
     end
     items
   end
@@ -2052,6 +2096,81 @@ lane :vault_add_apns_key do |options|
   Ship::Vault.write(Ship::Vault.apns_key_path(team), JSON.generate(data))
   Ship::Vault.publish!("Add APNs key for #{team}")
   UI.success("Stored as apple/#{team}/apns. Upload the same .p8 in Firebase > Project settings > Cloud Messaging.")
+end
+
+desc 'Add a DeviceCheck key (Firebase App Check on iOS) to the vault: vault_add_devicecheck_key path:AuthKey_X.p8 team_id: (key_id:)'
+lane :vault_add_devicecheck_key do |options|
+  path = File.expand_path(options[:path] || UI.user_error!('Pass path:/path/to/AuthKey_XXXX.p8'), Ship.root)
+  key_id = options[:key_id] || File.basename(path)[/AuthKey_(\w+)\.p8/, 1] || UI.user_error!('Pass key_id:')
+  team = options[:team_id] || UI.user_error!('Pass team_id:')
+  Ship::Vault.sync!
+  data = { 'key_id' => key_id, 'team_id' => team, 'key' => Ship.pem_key!(path) }
+  Ship::Vault.write(Ship::Vault.devicecheck_key_path(team), JSON.generate(data))
+  Ship::Vault.publish!("Add DeviceCheck key for #{team}")
+  UI.success("Stored as apple/#{team}/devicecheck. Each app: `fastlane appcheck_ios`. Delete the .p8 file.")
+end
+
+# The APNs key has no Firebase API: the upload is a browser step (ship-declare). This writes the team's .p8 to
+# a file for that upload; delete it right after. Nothing secret is printed.
+desc 'Write the team APNs .p8 from the vault to a file for the Firebase upload: apns_p8 out:/tmp/AuthKey.p8'
+lane :apns_p8 do |options|
+  out = File.expand_path(options[:out] || UI.user_error!('Pass out:/path/to/AuthKey_XXXX.p8'))
+  Ship::Vault.sync!
+  team = Ship.team_id
+  rel = Ship::Vault.apns_key_path(team)
+  UI.user_error!("No APNs key in the vault (#{rel}). Run vault_add_apns_key.") unless Ship::Vault.exist?(rel)
+  k = JSON.parse(Ship::Vault.read(rel))
+  File.write(out, k['key'])
+  File.chmod(0o600, out)
+  UI.success("Wrote #{out}: Key ID #{k['key_id']}, team #{k['team_id'] || team}. Delete it after the upload.")
+end
+
+desc 'Register the iOS app for Firebase App Check with the team DeviceCheck key from the vault (App Check API)'
+lane :appcheck_ios do
+  Ship::Vault.sync!
+  fb = Ship.firebase
+  UI.user_error!('No iOS app in lib/firebase_options.dart') unless fb['project'] && fb['ios']
+  team = Ship.team_id
+  rel = Ship::Vault.devicecheck_key_path(team)
+  UI.user_error!("No DeviceCheck key in the vault (#{rel}): Apple Developer > Keys > + > DeviceCheck, " \
+                 'then vault_add_devicecheck_key path:AuthKey_X.p8 team_id:') unless Ship::Vault.exist?(rel)
+  k = JSON.parse(Ship::Vault.read(rel))
+  name = "projects/#{fb['project']}/apps/#{fb['ios']}/deviceCheckConfig"
+  res = Ship.gcp_request(Net::HTTP::Patch, "https://firebaseappcheck.googleapis.com/v1/#{name}?updateMask=keyId,privateKey",
+                         { 'name' => name, 'keyId' => k['key_id'], 'privateKey' => k['key'] })
+  UI.user_error!('App Check API is off in this project: open App Check once in the Firebase console') unless res.is_a?(Hash)
+  UI.success("DeviceCheck registered for #{fb['ios']} (key #{res['keyId']})")
+  Ship.status_report
+end
+
+# Firebase makes a 1-unit budget when a project moves to Blaze; this adds one only where none covers the project.
+desc 'Add a monthly budget with email alerts (50/90/100 %, no cap) on this Firebase project: budget_alert (amount:10)'
+lane :budget_alert do |options|
+  account = Ship.billing_account || UI.user_error!('The project has no billing account (Spark plan): nothing to watch')
+  UI.user_error!("Turn on the Cloud Billing API in #{Ship.firebase['project']} first") if account == :off
+  existing = Ship.project_budgets(account)
+  unless existing
+    project = Ship.firebase['project']
+    Ship.gcp_request(Net::HTTP::Post, "https://serviceusage.googleapis.com/v1/projects/#{project}/services/billingbudgets.googleapis.com:enable", {})
+    UI.message("Turned on the Cloud Billing Budget API in #{project}")
+    existing = nil
+    6.times { sleep 10; break if (existing = Ship.project_budgets(account)) }
+    existing || UI.user_error!('The Budget API is still starting: run budget_alert again in a minute')
+  end
+  unless existing.empty?
+    UI.success("Already covered: #{existing.map { |b| b['displayName'] }.join(', ')}")
+    next Ship.status_report
+  end
+  currency = Ship.gcp_get("https://cloudbilling.googleapis.com/v1/#{account}")['currencyCode']
+  body = {
+    'displayName' => "#{Ship.firebase['project']} monthly",
+    'budgetFilter' => { 'projects' => ["projects/#{Ship.project_number}"], 'calendarPeriod' => 'MONTH' },
+    'amount' => { 'specifiedAmount' => { 'currencyCode' => currency, 'units' => (options[:amount] || 10).to_s } },
+    'thresholdRules' => [0.5, 0.9, 1.0].map { |t| { 'thresholdPercent' => t, 'spendBasis' => 'CURRENT_SPEND' } }
+  }
+  b = Ship.gcp_request(Net::HTTP::Post, "https://billingbudgets.googleapis.com/v1/#{account}/budgets", body)
+  UI.success("Budget #{b['displayName']}: #{body.dig('amount', 'specifiedAmount', 'units')} #{currency}/month, alerts to billing admins")
+  Ship.status_report
 end
 
 platform :ios do

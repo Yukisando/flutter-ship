@@ -107,6 +107,10 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `vault_add_play_key path: [name:]` | store a service account key in the vault |
 | `vault_list` | what the vault holds, without secrets |
 | `ship_status [done:id,id]` | where the app stands: Play, App Store, declarations, App Check, budget (ship-status skill); `done:` records hand-made steps |
+| `budget_alert [amount:10]` | a monthly budget with email alerts (50/90/100 %, no cap) on the app's Firebase project, unless one covers it |
+| `appcheck_ios` | register the iOS app for Firebase App Check with the team DeviceCheck key from the vault |
+| `vault_add_devicecheck_key path: team_id:` | store the team DeviceCheck .p8 in the vault |
+| `apns_p8 out:` | write the team APNs .p8 from the vault to a file for the Firebase upload (delete it after) |
 
 ## In-app products
 

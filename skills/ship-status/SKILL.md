@@ -15,7 +15,8 @@ description: Where every app stands on the way to "fully shipped" - Play product
 
 Steps are read live wherever an API can tell: Play tracks, App Store versions, Firebase App Check
 registration and enforcement (Firebase App Check API with the user's Application Default Credentials,
-billed to the app's own project), Cloud Functions enforcement (from `functions/src` and `functions/.env`).
+billed to the app's own project), Cloud Functions enforcement (from `functions/src` and `functions/.env`), billing budgets (Cloud Billing
+Budget API, which `budget_alert` turns on in the project).
 Steps no API reports are recorded in `fastlane/ship-done.yml` (committed): the lane or skill that does one
 records it (`android data_safety` does so itself), and anything done by hand is recorded with
 `$FL ship_status done:play_integrity_link,budget_alert`. Recording is additive: it never removes a date.
