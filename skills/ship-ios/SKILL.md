@@ -102,7 +102,7 @@ macOS runner as a zip on a draft GitHub release.
   - Business > Agreements (https://appstoreconnect.apple.com/business): with in-app purchases, Paid Apps must be
     Active. "New" means the user still has to update the legal entity, then sign, then add bank and tax.
   - A first in-app purchase needs its review screenshot (`review_screenshot:` in ship.yml) and must be ticked on the
-    version page before Add for Review. Capture the purchase sheet on the emulator (ship-screenshots tools). With no
+    version page before Add for Review. That section of the version page only appears once Paid Apps is Active. Capture the purchase sheet on the emulator (ship-screenshots tools). With no
     Google account there, billing returns no product and apps usually hide the sheet: patch the condition and the price
     label in a throwaway `git worktree` (never the user's checkout), build there, capture, delete the worktree. Then
     crop to the 1290:2796 ratio and scale to 1290x2796 (`products` refuses other sizes). The state can read
