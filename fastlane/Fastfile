@@ -1535,6 +1535,8 @@ module Ship
     res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
     # A Google API never turned on in this project answers 403 SERVICE_DISABLED: nothing was ever set up there.
     return nil if res.code == '403' && res.body.to_s.include?('SERVICE_DISABLED')
+    # 404 on a per-app path: the app id is not in this project (stale firebase_options.dart).
+    return :not_found if res.code == '404'
     UI.user_error!("#{uri.host}: HTTP #{res.code} #{res.body.to_s[0, 200]}") unless res.code.start_with?('2')
     JSON.parse(res.body.to_s.empty? ? '{}' : res.body)
   end
@@ -1543,6 +1545,18 @@ module Ship
 
   # nil when the project has never used App Check (its API is off).
   def app_check(path) = gcp_get("https://firebaseappcheck.googleapis.com/v1/projects/#{firebase['project']}/#{path}")
+
+  def app_not_found(platform)
+    [:todo, "#{platform} app #{firebase[platform.downcase]} not found in Firebase project #{firebase['project']}: " \
+            'lib/firebase_options.dart is stale (rerun flutterfire configure)']
+  end
+
+  # Play Integrity registration stores the app signing SHA-256 on the Firebase Android app. Registrations made
+  # before the console added appIntegrity / accountDetails to playIntegrityConfig only show up there.
+  def android_sha256?
+    certs = gcp_get("https://firebase.googleapis.com/v1beta1/projects/#{firebase['project']}/androidApps/#{firebase['android']}/sha")
+    certs.is_a?(Hash) && (certs['certificates'] || []).any? { |c| c['certType'] == 'SHA_256' }
+  end
 
   # Functions enforce App Check when a callable says enforceAppCheck: true, or when the
   # ENFORCE_APP_CHECK switch (Badalone's pattern) is on in functions/.env.
@@ -1634,7 +1648,9 @@ module Ship
         next [:na, 'no Android app in firebase_options.dart'] unless firebase['android']
         c = app_check("apps/#{firebase['android']}/playIntegrityConfig")
         next NO_APP_CHECK unless c
-        c.key?('appIntegrity') || c.key?('accountDetails') ? :ok : [:todo, 'not registered']
+        next app_not_found('Android') if c == :not_found
+        next :ok if c.key?('appIntegrity') || c.key?('accountDetails')
+        android_sha256? ? [:ok, 'app signing SHA-256 on file'] : [:todo, 'not registered']
       end
       add.call('play_integrity_link', 'Security', 'Play Integrity linked to the Cloud project') { recorded.call('play_integrity_link') }
       if app['ios'] && firebase['ios']
@@ -1642,6 +1658,7 @@ module Ship
                  'You: Apple Developer > Keys > a key with DeviceCheck; Firebase > App Check > iOS app > DeviceCheck: the .p8, its Key ID and the team') do
           dc = app_check("apps/#{firebase['ios']}/deviceCheckConfig")
           next NO_APP_CHECK unless dc
+          next app_not_found('iOS') if dc == :not_found
           dc['keyId'] ? [:ok, "DeviceCheck key #{dc['keyId']}"] : [:todo, 'no DeviceCheck key']
         end
         add.call('apns_key', 'Security', 'APNs key in Firebase (iOS push)') { push ? recorded.call('apns_key') : :na } if push
@@ -1653,7 +1670,7 @@ module Ship
                'Claude, on your go once most requests are verified (App Check > APIs): Firestore, Storage, Authentication') do
         next :na if wanted.empty?
         services = app_check('services')
-        next NO_APP_CHECK unless services
+        next NO_APP_CHECK unless services.is_a?(Hash)
         modes = (services['services'] || []).to_h { |s| [s['name'].split('/').last, s['enforcementMode']] }
         off = wanted.keys.reject { |s| modes[s] == 'ENFORCED' }
         off.empty? ? [:ok, 'all enforced'] : [:todo, "not enforced: #{off.map { |s| s.split('.').first }.join(', ')}"]
