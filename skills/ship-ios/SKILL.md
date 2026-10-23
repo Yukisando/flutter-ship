@@ -101,8 +101,12 @@ macOS runner as a zip on a draft GitHub release.
 - Before Add for Review, also check what `ios check` cannot see:
   - Business > Agreements (https://appstoreconnect.apple.com/business): with in-app purchases, Paid Apps must be
     Active. "New" means the user still has to update the legal entity, then sign, then add bank and tax.
-  - A first in-app purchase needs its review screenshot (`review_screenshot:` in ship.yml: a phone capture of the
-    purchase sheet works) and must be ticked on the version page before Add for Review.
+  - A first in-app purchase needs its review screenshot (`review_screenshot:` in ship.yml) and must be ticked on the
+    version page before Add for Review. Capture the purchase sheet on the emulator (ship-screenshots tools). With no
+    Google account there, billing returns no product and apps usually hide the sheet: patch the condition and the price
+    label in a throwaway `git worktree` (never the user's checkout), build there, capture, delete the worktree. Then
+    crop to the 1290:2796 ratio and scale to 1290x2796 (`products` refuses other sizes). The state can read
+    MISSING_METADATA for a minute after the upload; run `products only:ios` again before digging.
   - Firebase App Check: read which Apple provider `lib/main.dart` activates. DeviceCheck registration needs the team
     `.p8` uploaded by the user; App Attest only needs the toggle. Unregistered is harmless until enforcement is on.
 

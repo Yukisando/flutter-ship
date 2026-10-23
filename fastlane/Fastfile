@@ -1261,6 +1261,8 @@ module Ship
   IAP_NAME_MAX = 35        # App Store display name (Play allows 55)
   IAP_DESCRIPTION_MAX = 55 # App Store description (Play allows 200)
   PLAY_PURCHASE_OPTION = 'buy'
+  # iPhone screenshot sizes App Store Connect takes for an in-app purchase review screenshot (portrait).
+  IAP_REVIEW_SIZES = [[1320, 2868], [1290, 2796], [1284, 2778], [1242, 2688], [1179, 2556], [1242, 2208]].freeze
 
   def products
     Array(app['products'])
@@ -1442,6 +1444,13 @@ module Ship
   def asc_upload_review_screenshot!(iid, path)
     require 'digest'
     bytes = File.binread(path)
+    # Apple refuses other sizes (IMAGE_INCORRECT_DIMENSIONS) after the upload: catch it here. A phone capture
+    # fits once cropped to the 1290:2796 ratio and scaled.
+    size = bytes.start_with?("\x89PNG".b) ? bytes[16, 8].unpack('NN') : nil
+    unless IAP_REVIEW_SIZES.include?(size)
+      UI.user_error!("#{path} is #{size&.join('x') || 'not a PNG'}: an App Store review screenshot must be an iPhone size " \
+                     "(#{IAP_REVIEW_SIZES.map { |s| s.join('x') }.join(', ')})")
+    end
     checksum = Digest::MD5.hexdigest(bytes)
     existing = asc_get("v2/inAppPurchases/#{iid}/appStoreReviewScreenshot")&.dig('data')
     return if existing && existing.dig('attributes', 'sourceFileChecksum') == checksum
