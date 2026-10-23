@@ -19,6 +19,7 @@ If `fastlane/ship.yml` is missing, follow ship-init first.
    - If it reports that Play does not know the app yet: the bundle is built. Give the user the printed one-time steps (manual upload in Play Console), then stop.
 5. Commit the changelog files.
 6. Tell the user: version, track, status, and that the draft is waiting in Play Console > Test and release > <track> (review and roll out there).
+7. `$FL ship_status`, and add its open steps to the report (ship-status skill).
 
 A build takes several minutes. Run it in the background and wait.
 
@@ -27,7 +28,7 @@ A build takes several minutes. Run it in the background and wait.
 | User asks | Command |
 |---|---|
 | What is live / what is on Play | `$FL android status` |
-| Is the app ready for production / review | `$FL android check` (validates a production release of the latest test build, changes nothing) |
+| Is the app ready for production / review | `$FL android check` (validates a production release of the latest test build, changes nothing), then `$FL ship_status` for declarations and security |
 | Promote to production (draft, the user finishes in the console) | `$FL android promote` |
 | Promote and send for review now | `$FL android promote status:completed` (confirm with the user first) |
 | Staged rollout | `$FL android promote rollout:0.1` (confirm first) |

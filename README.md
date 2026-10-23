@@ -78,6 +78,9 @@ fastlane/ship.yml                      package, locales, track, contact, privacy
 fastlane/metadata/android/<locale>/    listing, changelogs, images
 fastlane/shots/shots.yml, raw/         screenshot plan, captions, raw captures
 fastlane/STORE_SETUP.md                one-time Play Console checklist
+fastlane/declarations.yml              Data safety, App Privacy, App content answers (ship-declare)
+fastlane/ship-done.yml                 steps no API can read, with the day they were done
+fastlane/ship-status.json              last `ship_status` result (git-ignored), read by the Ship Board
 ```
 
 Release signing reads `SHIP_KEYSTORE_*` environment variables set by the lanes: see `templates/android/`.
@@ -103,6 +106,7 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `products [only:android\|ios]` | create or update the in-app products of `ship.yml` on both stores |
 | `vault_add_play_key path: [name:]` | store a service account key in the vault |
 | `vault_list` | what the vault holds, without secrets |
+| `ship_status [done:id,id]` | where the app stands: Play, App Store, declarations, App Check, budget (ship-status skill); `done:` records hand-made steps |
 
 ## In-app products
 

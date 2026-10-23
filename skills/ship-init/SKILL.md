@@ -71,4 +71,4 @@ To fill declarations.yml, read the code: Firebase Auth (email, user IDs, guest m
 
 ## 6. Finish
 
-Commit the fastlane folder, metadata, signing patch and Gemfile with a clear message. Then tell the user only what remains for them: the unchecked STORE_SETUP.md items, in order.
+Commit the fastlane folder, metadata, signing patch and Gemfile with a clear message. Then run `... ship_status`: it is the app's checklist from here on (stores, declarations, App Check, budget). Tell the user only what remains for them: the unchecked STORE_SETUP.md items and the `You:` lines of ship_status, in order.

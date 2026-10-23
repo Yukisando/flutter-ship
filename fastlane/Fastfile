@@ -15,6 +15,7 @@
 
 require 'yaml'
 require 'json'
+require 'net/http'
 require 'open3'
 require 'openssl'
 require 'securerandom'
@@ -1466,7 +1467,249 @@ module Ship
   end
 end
 
+# ------------------------------------------------------------------ ship status
+
+# One checklist for every app: what a store-ready app needs on Play, the App Store and Firebase.
+# Each item is read from the stores and Firebase when an API can tell, and otherwise from
+# fastlane/ship-done.yml, where the lanes and skills that do a step record it (id: date). The result
+# goes to the terminal and to fastlane/ship-status.json, which the dashboard (ship-status skill) reads.
+module Ship
+  module_function
+
+  DONE_FILE = 'ship-done.yml'
+
+  # Steps no API reports. Each one says who does it and where.
+  RECORDED = {
+    'play_data_safety' => 'Claude: `android data_safety` (ship-declare)',
+    'play_app_content' => 'Claude: ship-declare fills App content in Play Console',
+    'play_store_settings' => 'Claude: ship-declare sets category and tags (Store settings)',
+    'play_integrity_link' => 'Claude in the browser, or you: Play Console > Protected with Play > Play Integrity API > link the Firebase Cloud project',
+    'ios_app_privacy' => 'Claude writes the answers (ship-declare); you click Publish in App Store Connect > App Privacy',
+    'apns_key' => 'You: Firebase > Project settings > Cloud Messaging > Apple app > APNs Authentication Key (vault apple/<team>/apns)',
+    'budget_alert' => 'You: Google Cloud > Billing > Budgets & alerts > a budget on this project (e.g. 10 EUR)'
+  }.freeze
+
+  def done_path = File.join(fastlane_dir, DONE_FILE)
+
+  def done
+    @done ||= File.exist?(done_path) ? (YAML.safe_load(File.read(done_path), permitted_classes: [Date]) || {}) : {}
+  end
+
+  # Records a step as done today (additive: an existing date is kept).
+  def record_done!(*ids)
+    ids.flatten.map(&:to_s).each do |id|
+      UI.user_error!("Unknown step '#{id}'. Recorded steps: #{RECORDED.keys.join(', ')}") unless RECORDED.key?(id)
+      done[id] ||= Date.today.to_s
+    end
+    header = "# Store and Firebase steps no API can read, with the day they were done (flutter-ship `ship_status`).\n"
+    File.write(done_path, header + done.sort.to_h.to_yaml.sub(/\A---\n/, ''))
+  end
+
+  # Firebase ids from lib/firebase_options.dart (flutterfire), or nil when the app has no Firebase.
+  def firebase
+    @firebase ||= begin
+      path = File.join(root, 'lib', 'firebase_options.dart')
+      if File.exist?(path)
+        text = File.read(path)
+        { 'project' => text[/projectId:\s*'([^']+)'/, 1],
+          'android' => text[/appId:\s*'([^']+:android:[^']+)'/, 1],
+          'ios' => text[/appId:\s*'([^']+:ios:[^']+)'/, 1] }
+      else
+        {}
+      end
+    end
+  end
+
+  def pubspec_uses?(package)
+    pubspec = File.join(root, 'pubspec.yaml')
+    File.exist?(pubspec) && File.read(pubspec).match?(/^\s+#{Regexp.escape(package)}:/)
+  end
+
+  # Google API call with the user's Application Default Credentials, billed to the app's own project.
+  def gcp_get(url)
+    @gcp_token ||= capture!('gcloud', 'auth', 'application-default', 'print-access-token').strip
+    uri = URI(url)
+    req = Net::HTTP::Get.new(uri)
+    req['Authorization'] = "Bearer #{@gcp_token}"
+    req['x-goog-user-project'] = firebase['project']
+    res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
+    # A Google API never turned on in this project answers 403 SERVICE_DISABLED: nothing was ever set up there.
+    return nil if res.code == '403' && res.body.to_s.include?('SERVICE_DISABLED')
+    UI.user_error!("#{uri.host}: HTTP #{res.code} #{res.body.to_s[0, 200]}") unless res.code.start_with?('2')
+    JSON.parse(res.body.to_s.empty? ? '{}' : res.body)
+  end
+
+  NO_APP_CHECK = [:todo, 'App Check never set up in this Firebase project (open App Check in the console)'].freeze
+
+  # nil when the project has never used App Check (its API is off).
+  def app_check(path) = gcp_get("https://firebaseappcheck.googleapis.com/v1/projects/#{firebase['project']}/#{path}")
+
+  # Functions enforce App Check when a callable says enforceAppCheck: true, or when the
+  # ENFORCE_APP_CHECK switch (Badalone's pattern) is on in functions/.env.
+  def functions_enforcement
+    src = Dir.glob(File.join(root, 'functions', '**', '*.{ts,js}'))
+             .reject { |f| f.match?(%r{/functions/(node_modules|lib|build)/}) || f.end_with?('.test.ts', '.test.js') }
+    return nil if src.empty?
+    code = src.map { |f| File.read(f) }.join("\n")
+    env = Dir.glob(File.join(root, 'functions', '.env*')).map { |f| File.read(f) }.join("\n")
+    on = code.match?(/enforceAppCheck:\s*true/) ||
+         (code.include?('ENFORCE_APP_CHECK') && env.match?(/^ENFORCE_APP_CHECK=true/))
+    if on then [:ok, 'callables enforce App Check']
+    elsif code.include?('enforceAppCheck') then [:todo, 'wired but off: ENFORCE_APP_CHECK=true in functions/.env, then deploy']
+    else [:todo, 'callables do not check App Check: add enforceAppCheck to onCall options']
+    end
+  end
+
+  # [{id, group, title, state, detail, how}] for this app. state: ok | todo | wait | na | unknown.
+  def status_items
+    items = []
+    add = lambda do |id, group, title, how = nil, &check|
+      state, detail = begin
+        result = check.call
+        result.is_a?(Array) ? result : [result, nil]
+      rescue StandardError => e
+        [:unknown, e.message.lines.first.to_s.strip[0, 160]]
+      end
+      items << { id: id, group: group, title: title, state: state.to_s, detail: detail, how: how || RECORDED[id] }
+    end
+    recorded = ->(id) { done[id] ? [:ok, "done #{done[id]}"] : [:todo, nil] }
+
+    # Google Play
+    releases = nil
+    add.call('play_app', 'Google Play', 'App exists on Play', 'You: create the app and upload the first bundle (STORE_SETUP.md)') do
+      next [:na, 'no Play service account in the vault'] unless play_key?
+      with_play_key { |k| releases = track_releases(k) }
+      [:ok, "#{releases.size} release(s)"]
+    rescue StandardError => e
+      app_missing_error?(e) ? [:todo, 'Play does not know the package yet'] : raise
+    end
+    add.call('play_production', 'Google Play', 'Production release out (live, or in review for a new app)', 'Claude: `android promote`, then send for review (ship-android)') do
+      next [:unknown, 'Play not reachable'] unless releases
+      prod = releases.select { |r| r[:track] == 'production' }
+      live = prod.find { |r| r[:status] == 'completed' }
+      next [:ok, live[:name]] if live
+      next [:wait, "draft #{prod.first[:name]}: sent for review, or waiting to be sent"] if prod.any?
+      [:todo, 'nothing on production']
+    end
+    # Play refuses a production release until these forms are complete, so a live app has them.
+    on_production = items.last[:state] == 'ok'
+    %w[play_data_safety play_app_content play_store_settings].each do |id|
+      title = { 'play_data_safety' => 'Data safety sent', 'play_app_content' => 'App content forms filled',
+                'play_store_settings' => 'Category and tags set' }[id]
+      add.call(id, 'Google Play', title) do
+        next recorded.call(id) if done[id] || !on_production
+        [:ok, 'required by Play for production']
+      end
+    end
+
+    # App Store
+    if app['ios']
+      asc = nil
+      add.call('ios_app', 'App Store', 'App record exists', 'You: App Store Connect > Apps > + > New App') do
+        asc = asc_app
+        asc ? [:ok, "Apple ID #{asc.id}"] : [:todo, 'no App Store Connect record']
+      end
+      add.call('ios_live', 'App Store', 'Live on the App Store', 'Claude: ship-ios (TestFlight build, check, submit)') do
+        next [:unknown, 'no app record'] unless asc
+        states = asc.get_app_store_versions(filter: { platform: 'IOS' }).map { |v| [v.version_string, v.app_store_state] }
+        live = states.find { |_, s| %w[READY_FOR_SALE READY_FOR_DISTRIBUTION].include?(s) }
+        review = states.find { |_, s| %w[WAITING_FOR_REVIEW IN_REVIEW PENDING_DEVELOPER_RELEASE PROCESSING_FOR_DISTRIBUTION].include?(s) }
+        if live then [:ok, "#{live[0]} live#{review ? ", #{review[0]} #{review[1].downcase}" : ''}"]
+        elsif review then [:wait, "#{review[0]} #{review[1].downcase.tr('_', ' ')}"]
+        else [:todo, states.first ? "#{states.first[0]} #{states.first[1].downcase.tr('_', ' ')}" : 'no version']
+        end
+      end
+      # Apple does not review a version without published App Privacy answers.
+      reviewed = %w[ok wait].include?(items.last[:state])
+      add.call('ios_app_privacy', 'App Store', 'App Privacy published') do
+        done['ios_app_privacy'] || !reviewed ? recorded.call('ios_app_privacy') : [:ok, 'required by Apple for review']
+      end
+    end
+
+    # Firebase security
+    if firebase['project']
+      push = (ios['capabilities'] || []).include?('PUSH_NOTIFICATIONS') || pubspec_uses?('firebase_messaging')
+      add.call('appcheck_android', 'Security', 'App Check: Android registered (Play Integrity)',
+               'Claude in the browser, or you: Firebase > App Check > Android app > Play Integrity, with the app signing SHA-256 from Play Console > App signing') do
+        next [:na, 'no Android app in firebase_options.dart'] unless firebase['android']
+        c = app_check("apps/#{firebase['android']}/playIntegrityConfig")
+        next NO_APP_CHECK unless c
+        c.key?('appIntegrity') || c.key?('accountDetails') ? :ok : [:todo, 'not registered']
+      end
+      add.call('play_integrity_link', 'Security', 'Play Integrity linked to the Cloud project') { recorded.call('play_integrity_link') }
+      if app['ios'] && firebase['ios']
+        add.call('appcheck_ios', 'Security', 'App Check: iOS registered (DeviceCheck / App Attest)',
+                 'You: Apple Developer > Keys > a key with DeviceCheck; Firebase > App Check > iOS app > DeviceCheck: the .p8, its Key ID and the team') do
+          dc = app_check("apps/#{firebase['ios']}/deviceCheckConfig")
+          next NO_APP_CHECK unless dc
+          dc['keyId'] ? [:ok, "DeviceCheck key #{dc['keyId']}"] : [:todo, 'no DeviceCheck key']
+        end
+        add.call('apns_key', 'Security', 'APNs key in Firebase (iOS push)') { push ? recorded.call('apns_key') : :na } if push
+      end
+      wanted = { 'firestore.googleapis.com' => 'cloud_firestore', 'firebasestorage.googleapis.com' => 'firebase_storage',
+                 'identitytoolkit.googleapis.com' => 'firebase_auth', 'firebasedatabase.googleapis.com' => 'firebase_database' }
+                 .select { |_, pkg| pubspec_uses?(pkg) }
+      add.call('appcheck_enforced', 'Security', 'App Check enforced on Firebase services',
+               'Claude, on your go once most requests are verified (App Check > APIs): Firestore, Storage, Authentication') do
+        next :na if wanted.empty?
+        services = app_check('services')
+        next NO_APP_CHECK unless services
+        modes = (services['services'] || []).to_h { |s| [s['name'].split('/').last, s['enforcementMode']] }
+        off = wanted.keys.reject { |s| modes[s] == 'ENFORCED' }
+        off.empty? ? [:ok, 'all enforced'] : [:todo, "not enforced: #{off.map { |s| s.split('.').first }.join(', ')}"]
+      end
+      add.call('appcheck_functions', 'Security', 'Cloud Functions require App Check',
+               'Claude: enforceAppCheck on every callable, deploy once the apps send tokens') do
+        functions_enforcement || :na
+      end
+      add.call('budget_alert', 'Security', 'Billing budget alert') { recorded.call('budget_alert') }
+    end
+    items
+  end
+
+  def status_report
+    items = status_items
+    marks = { 'ok' => '[x]', 'todo' => '[ ]', 'wait' => '[~]', 'na' => '[-]', 'unknown' => '[?]' }
+    items.group_by { |i| i[:group] }.each do |group, list|
+      UI.header(group)
+      list.each do |i|
+        line = "#{marks[i[:state]]} #{i[:title]}#{i[:detail] ? " (#{i[:detail]})" : ''}"
+        case i[:state]
+        when 'ok', 'na' then UI.message(line)
+        when 'wait' then UI.important(line)
+        else UI.error("#{line}\n      -> #{i[:how]}")
+        end
+      end
+    end
+    counted = items.reject { |i| i[:state] == 'na' }
+    report = {
+      app: app['app_name'], package: package, folder: File.basename(root), checked_at: Time.now.utc.iso8601,
+      production: items.find { |i| i[:id] == 'play_production' }&.dig(:detail),
+      ok: counted.count { |i| i[:state] == 'ok' }, total: counted.size, items: items
+    }
+    File.write(File.join(fastlane_dir, 'ship-status.json'), JSON.pretty_generate(report))
+    ignore = File.join(root, '.gitignore')
+    unless File.exist?(ignore) && File.read(ignore).include?('ship-status.json')
+      File.open(ignore, 'a') { |f| f.write("#{File.exist?(ignore) && !File.read(ignore).end_with?("
+") ? "
+" : ''}fastlane/ship-status.json
+") }
+    end
+    UI.success("#{report[:ok]}/#{report[:total]} done. Saved fastlane/ship-status.json")
+    report
+  end
+end
+
 # ------------------------------------------------------------------ lanes
+
+desc 'Where this app stands: Play, App Store and Firebase security, one line per step (fastlane/ship-status.json).'
+desc 'done:play_app_content,budget_alert records steps no API can read (fastlane/ship-done.yml)'
+lane :ship_status do |options|
+  Ship::Vault.sync!
+  Ship.record_done!(options[:done].to_s.split(',').map(&:strip)) if options[:done]
+  Ship.status_report
+end
+
 
 desc 'Add a Google Play service account key to the vault (name: defaults to "default")'
 lane :vault_add_play_key do |options|
@@ -1697,6 +1940,7 @@ platform :android do
       request = Google::Apis::AndroidpublisherV3::SafetyLabelsUpdateRequest.new(safety_labels: csv)
       Ship.play_client(json_key).client.data_application_safety(Ship.package, request)
     end
+    Ship.record_done!('play_data_safety')
     UI.success('Data safety sent. It shows under App content > Data safety; send it for review from Publishing overview.')
   end
 

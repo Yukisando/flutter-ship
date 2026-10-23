@@ -19,6 +19,7 @@ lane registers the app's runner there on first use and stops if the Mac is offli
 3. `$FL ios release`. Wait for the run (`gh run watch <id> -R <repo>`, in the background). It builds a signed .ipa,
    uploads it to TestFlight and pushes a tag `ios/<name>+<number>`.
 4. Tell the user: version, build number, and that it appears in TestFlight once Apple has processed it (5-30 min).
+5. `$FL ship_status`, and add its open steps to the report (ship-status skill).
 
 ## First time for an Apple team or an app
 

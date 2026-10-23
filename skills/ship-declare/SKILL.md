@@ -1,6 +1,6 @@
 ---
 name: ship-declare
-description: Fill a Flutter app's store declarations from fastlane/declarations.yml - Play Data safety through the official API, Apple App Privacy through the user's signed-in App Store Connect tab, and the Play App content forms that have no API (privacy policy, ads, sign in details, content rating, target audience, advertising ID, government, financial, health, category) by driving Play Console in the user's browser. Use when the user wants the App content / App Privacy / Data safety / content rating forms filled, or after ship-init on a new app.
+description: Fill a Flutter app's store declarations from fastlane/declarations.yml - Play Data safety through the official API, Apple App Privacy through the user's signed-in App Store Connect tab, and the Play App content forms that have no API (privacy policy, ads, sign in details, content rating, target audience, advertising ID, government, financial, health, category, tags) by driving Play Console in the user's browser, plus Firebase App Check registration (Play Integrity, DeviceCheck) and the other security steps ship_status lists. Use when the user wants the App content / App Privacy / Data safety / content rating forms filled, or after ship-init on a new app.
 ---
 
 # Store declarations
@@ -78,8 +78,29 @@ Sign in details (they type the password); then this skill does the rest, Target 
 accounts for App Store Connect > the version > App Review Information.
 
 Record every answer given in the browser back into `declarations.yml` (`play_content:`), with the resulting ratings.
+Then record the steps in the app's status: `$FL ship_status done:play_app_content,play_store_settings` (Data safety
+records itself; add `ios_app_privacy` once the user says they clicked Publish).
 
-## 4. First production release (when the user asks to go live)
+## 4. Security: App Check (every Firebase app, before production)
+
+App Check proves a request comes from the real app on a real device, so a script cannot create accounts or call
+Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, list the `You:` ones.
+- Android: Firebase console > App Check > the Android app > Play Integrity: the **app signing** SHA-256 from Play
+  Console > Test and release > App signing (`.../keymanagement`; the page's first fingerprint, not the upload key),
+  tick the terms, Save. Claude can do this in the browser; the fingerprint is read, never typed by guess.
+- Play Console > Protected with Play (`.../protect-with-play`) > Play Integrity API > Get started > link the
+  Firebase Cloud project. Record `play_integrity_link`.
+- iOS: the app's code picks the provider (`AppleDeviceCheckProvider` or App Attest). DeviceCheck needs a key with
+  DeviceCheck enabled (Apple Developer > Keys, the user creates or edits it, one key can also carry APNs), uploaded
+  in Firebase > App Check > the iOS app > DeviceCheck with its Key ID and team. The .p8 never goes in chat.
+- Push apps: the APNs key in Firebase > Project settings > Cloud Messaging (vault `apple/<team>/apns`). Record `apns_key`.
+- Budget alert: Google Cloud > Billing > Budgets & alerts, a small monthly budget on the project. Record `budget_alert`.
+- Enforcement (Firestore, Storage, Authentication in App Check > APIs; `enforceAppCheck` on Functions callables) comes
+  last, on the user's go, once the release that sends tokens is what users run: see ship-status.
+- Release builds must activate App Check with the real providers and debug builds with the debug ones
+  (`AndroidDebugProvider`, `AppleDebugProvider`), whose tokens go in App Check > Manage debug tokens.
+
+## 5. First production release (when the user asks to go live)
 
 After `$FL android promote` puts a production draft up, Publishing overview stays locked ("complete the required
 steps in the app dashboard") until the dashboard's "Create and publish a release" tasks are done:
