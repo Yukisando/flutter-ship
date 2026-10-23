@@ -8,8 +8,31 @@
 //   answerIarc(yes)     answer every open IARC question: Yes when the question matches the regex
 //                       `yes`, otherwise No. Sections open one by one, so it waits between answers.
 //                       Returns one line per answer: check them, then Save, Next, read the ratings, Save.
-// Angular <mat-checkbox> elements (the "Select all rows" box on the countries page) ignore .click():
-// use the computer tool's left_click on their coordinates (getBoundingClientRect).
+//   tick(cb)            check an Angular <mat-checkbox role=checkbox> (table rows, "Select all rows",
+//                       tags): they ignore .click(), but take mouse events sent to their inner div
+//   setTags(['Card'])   in the open Manage tags panel, check exactly these tags; then btn('Apply').
+//                       Returns the tags now checked, or the names Play does not offer.
+window.tick = async (cb, on = true) => {
+  if ((cb.getAttribute('aria-checked') === 'true') !== on) {
+    const inner = cb.querySelector('div') || cb;
+    for (const ty of ['mousedown', 'mouseup', 'click'])
+      inner.dispatchEvent(new MouseEvent(ty, { bubbles: true, cancelable: true, view: window }));
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return cb.getAttribute('aria-checked');
+};
+window.setTags = async (names) => {
+  const panel = [...document.querySelectorAll('[role=dialog],aside,[class*=panel]')]
+    .filter((e) => e.innerText.includes('Add up to 5 tags'))
+    .sort((a, b) => a.innerText.length - b.innerText.length)[0];
+  if (!panel) return 'open Manage tags first';
+  const rows = [...panel.querySelectorAll('[role=row]')].filter((r) => r.querySelector('[role=checkbox]'));
+  const name = (r) => r.innerText.split('\n')[0].trim();
+  const missing = names.filter((n) => !rows.some((r) => name(r) === n));
+  if (missing.length) return `not offered: ${missing.join(', ')}`;
+  for (const r of rows) await tick(r.querySelector('[role=checkbox]'), names.includes(name(r)));
+  return rows.filter((r) => r.querySelector('[role=checkbox]').getAttribute('aria-checked') === 'true').map(name).join(', ');
+};
 window.lbl = (i) => {
   let e = i;
   for (let k = 0; k < 6 && e; k++) {

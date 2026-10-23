@@ -57,6 +57,7 @@ without screenshots: open `https://play.google.com/console/u/0/developers/<dev i
 | Financial features | `finance` | "My app doesn't provide any financial features" > Next > Save |
 | Health apps | `health` | "My app does not have any health features" > Next > Save |
 | Category | `../store-settings` | App category > Edit |
+| Tags | `../store-settings` | Manage tags > `await setTags(play_content.tags)` > `btn('Apply')`; saves at once. Up to 5, from Play's own list (it has Card, Trivia, Casual, Educational, but no Collectible): an unknown name is reported, pick the nearest |
 
 What makes it fast and reliable (one `browser_batch` per form: navigate, wait 3 s, inject, answer, save, read back):
 - Paste `play_forms.js` (next to this file) into `javascript_tool` on each form page, then use `inputs()`,
@@ -83,7 +84,8 @@ Record every answer given in the browser back into `declarations.yml` (`play_con
 After `$FL android promote` puts a production draft up, Publishing overview stays locked ("complete the required
 steps in the app dashboard") until the dashboard's "Create and publish a release" tasks are done:
 - Countries / regions: `.../tracks/production?tab=countryAvailability` > Add countries / regions > tick "Select all
-  rows" with a real `left_click` on its coordinates (it is a `mat-checkbox`, JS `.click()` does nothing) > Save.
+  rows" with `await tick(document.querySelector('[role=checkbox][aria-label="Select all rows"]'))` (a
+  `mat-checkbox`: plain `.click()` does nothing) > Save.
 - Preview and confirm: Production > Releases > Edit release > Next > (read errors with `text()`) > Save.
 Then Publishing overview runs quick checks (up to ~15 minutes) before "Send changes for review" unlocks. Sending
 reaches real users after Google's review: do it only on the user's explicit go.
