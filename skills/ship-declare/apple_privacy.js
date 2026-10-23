@@ -1,8 +1,9 @@
 // App Privacy for one app, through App Store Connect's web API (the same calls fastlane's
 // upload_app_privacy_details_to_app_store makes). Run with javascript_tool in a signed-in
-// appstoreconnect.apple.com tab. Fill APP, DATA and TRACKING from declarations.yml (app_privacy).
+// appstoreconnect.apple.com tab. Fill BUNDLE, DATA and TRACKING from declarations.yml (app_privacy).
 // It does not publish: check the page, then click Publish.
-const APP = '0000000000'; // Apple id, from the App Store Connect URL
+const BUNDLE = 'com.coldsnap.app'; // the app's Apple id is looked up from it
+const APP = (await (await fetch(`/iris/v1/apps?filter[bundleId]=${BUNDLE}&fields[apps]=name`, { credentials: 'include' })).json()).data[0].id;
 const TRACKING = false;
 const DATA = {
   // CATEGORY: [[PURPOSES], linked]
