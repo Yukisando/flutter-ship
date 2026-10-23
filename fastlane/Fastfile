@@ -1944,8 +1944,14 @@ platform :ios do
       gaps = %w[contactFirstName contactLastName contactEmail contactPhone].select { |k| review[k].to_s.empty? }
       check.call('Review contact', gaps.empty?, gaps.empty? ? review['contactEmail'] : "missing #{gaps.join(', ')}")
       demo = review['demoAccountRequired']
-      check.call('Sign-in for review', !demo || !review['demoAccountName'].to_s.empty?,
-                 demo ? "demo account #{review['demoAccountName'].to_s.empty? ? 'required but empty' : 'set'}" : 'not required')
+      # declarations.yml knows whether a feature needs an account; reviewers then need a demo one.
+      decl = File.join(Ship.fastlane_dir, 'declarations.yml')
+      needs = File.exist?(decl) && Ship.declarations.dig('play_content', 'sign_in_required')
+      check.call('Sign-in for review', demo ? !review['demoAccountName'].to_s.empty? : !needs,
+                 if demo then "demo account #{review['demoAccountName'].to_s.empty? ? 'required but empty' : 'set'}"
+                 elsif needs then 'not required, but declarations.yml says a feature needs an account: add a demo account'
+                 else 'not required'
+                 end)
     else
       check.call('Review contact', false, 'no App Review information')
     end
@@ -1983,6 +1989,18 @@ platform :ios do
     territories = avail ? Ship.asc_get("v2/appAvailabilities/#{avail}/territoryAvailabilities?limit=200&include=territory")['data'] : []
     on = territories.select { |t| t['attributes']['available'] }.map { |t| t['relationships']&.dig('territory', 'data', 'id') || t['id'] }
     check.call('Availability', on.any?, on.any? ? "#{on.size} territor#{on.size == 1 ? 'y' : 'ies'} #{on.first(10).join(' ')}" : 'not set')
+
+    # A first in-app purchase is reviewed with the app: it needs its metadata (review screenshot included), the
+    # Paid Apps Agreement (Business > Agreements, not in the API) and to be ticked on the version page.
+    iaps = Ship.asc_get("v1/apps/#{a.id}/inAppPurchasesV2?limit=200")&.dig('data') || []
+    iaps.each do |i|
+      state = i['attributes']['state']
+      check.call("In-app purchase #{i['attributes']['productId']}", state != 'MISSING_METADATA', state)
+    end
+    if iaps.any?
+      UI.important('In-app purchases need the Paid Apps Agreement Active (Business > Agreements), and a first purchase must be ' \
+                   'ticked on the version page (In-App Purchases and Subscriptions) before Add for Review.')
+    end
 
     UI.important('App Privacy (data types) is not readable through the API: check App Store Connect > App Privacy shows "Published".')
     if missing.empty?

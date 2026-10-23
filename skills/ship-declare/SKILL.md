@@ -64,4 +64,8 @@ What makes it fast and reliable:
 - After each Save a "Go to Publishing overview?" dialog opens: press Escape.
 - Nothing goes live until the user sends the changes for review from Publishing overview. Leave that to them.
 
+Order for a new app: the user creates the app and uploads the first bundle; if a feature needs an account they fill
+Sign in details (they type the password); then this skill does the rest, Target audience included. Use the same demo
+accounts for App Store Connect > the version > App Review Information.
+
 Record every answer given in the browser back into `declarations.yml` (`play_content:`), with the resulting ratings.

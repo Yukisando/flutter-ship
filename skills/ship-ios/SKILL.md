@@ -95,8 +95,16 @@ macOS runner as a zip on a draft GitHub release.
 - Picking the build and Add for Review stay manual (App Store Connect > the version > pick the build > Add for Review): write the remaining
   console steps in the app's `fastlane/STORE_SETUP_IOS.md`, click by click with the exact values to type:
   APNs key upload in Firebase, TestFlight testers, Pricing and Availability (price, countries), Content Rights, then the version:
-  pick the build, "Sign-in required" (No when a guest mode exists, else a demo account kept out of git), manual
-  release, Add for Review. Keep the Play guide (`fastlane/STORE_SETUP.md`) in the same style and tick what is done.
+  pick the build, "Sign-in required" (No only when every feature works without an account; a guest mode that
+  locks friends or trades still needs a demo account, kept out of git), manual release, Add for Review. Keep the Play
+  guide (`fastlane/STORE_SETUP.md`) in the same style and tick what is done.
+- Before Add for Review, also check what `ios check` cannot see:
+  - Business > Agreements (https://appstoreconnect.apple.com/business): with in-app purchases, Paid Apps must be
+    Active. "New" means the user still has to update the legal entity, then sign, then add bank and tax.
+  - A first in-app purchase needs its review screenshot (`review_screenshot:` in ship.yml: a phone capture of the
+    purchase sheet works) and must be ticked on the version page before Add for Review.
+  - Firebase App Check: read which Apple provider `lib/main.dart` activates. DeviceCheck registration needs the team
+    `.p8` uploaded by the user; App Attest only needs the toggle. Unregistered is harmless until enforcement is on.
 
 ## Errors
 
