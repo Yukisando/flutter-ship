@@ -982,6 +982,7 @@ module Ship
     UI.important("App Store Connect has no app for #{bundle_id} yet. Apple does not let the API create it. One-time step:")
     UI.message('  App Store Connect > Apps > + > New App: platform iOS, a name unique on the store,')
     UI.message("  primary language #{app['default_locale'] || locales.first}, bundle id #{bundle_id}, SKU #{bundle_id}.")
+    UI.message('  User Access: Limited Access (Full Access shows the app to every App Store Connect user, colleagues included).')
     UI.message('  Then run the lane again.')
   end
 

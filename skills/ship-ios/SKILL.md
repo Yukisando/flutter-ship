@@ -33,7 +33,9 @@ lane registers the app's runner there on first use and stops if the Mac is offli
    `ASSOCIATED_DOMAINS`). `vault_list` shows each key's team.
 3. `$FL ios setup`: registers the bundle id and capabilities, makes the Apple Distribution certificate (one per team,
    private key only in the vault) and the App Store profile. It says when the App Store Connect app is missing:
-   the user creates it by hand (Apps > + > New App, the bundle id); Apple's API cannot.
+   the user creates it by hand (Apps > + > New App, the bundle id, User Access **Limited Access**: Full Access
+   shows the new app to every App Store Connect user of the team, such as a colleague added for one app only); Apple's
+   API cannot. Check afterwards: Users and Access, each user's apps.
 4. Xcode project: `DEVELOPMENT_TEAM`, `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements` (with `aps-environment`
    `production` for push), a deployment target the plugins accept, `UIBackgroundModes` `remote-notification` for FCM,
    `ITSAppUsesNonExemptEncryption` false. Opaque app icons (`remove_alpha_ios: true` with flutter_launcher_icons).
