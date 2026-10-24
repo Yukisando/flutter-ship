@@ -2383,7 +2383,7 @@ platform :ios do
     check.call('Availability', on.any?, on.any? ? "#{on.size} territor#{on.size == 1 ? 'y' : 'ies'} #{on.first(10).join(' ')}" : 'not set')
 
     # A first in-app purchase is reviewed with the app: it needs its metadata (review screenshot included), the
-    # Paid Apps Agreement (Business > Agreements, not in the API) and to be ticked on the version page.
+    # Paid Apps Agreement (Business > Agreements, not in the API) and to join the version's draft submission.
     iaps = Ship.asc_get("v1/apps/#{a.id}/inAppPurchasesV2?limit=200")&.dig('data') || []
     iaps.each do |i|
       state = i['attributes']['state']
