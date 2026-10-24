@@ -30,7 +30,7 @@ lane registers the app's runner there on first use and stops if the Mac is offli
      The user also uploads that .p8 in Firebase > Project settings > Cloud Messaging.
 2. `fastlane/ship.yml`: an `ios:` block with `asc_key: <account>` (the team comes with the key) and `capabilities`
    (e.g. `[PUSH_NOTIFICATIONS]`; App Store Connect API names: Sign in with Apple is `APPLE_ID_AUTH`, Universal Links
-   `ASSOCIATED_DOMAINS`). `vault_list` shows each key's team.
+   `ASSOCIATED_DOMAINS`; `APP_ATTEST` has no API: ticked by hand on the App ID, then checked on the profile). `vault_list` shows each key's team.
 3. `$FL ios setup`: registers the bundle id and capabilities, makes the Apple Distribution certificate (one per team,
    private key only in the vault) and the App Store profile. It says when the App Store Connect app is missing:
    the user creates it by hand (Apps > + > New App, the bundle id, User Access **Limited Access**: Full Access
@@ -131,5 +131,14 @@ macOS runner as a zip on a draft GitHub release.
 - **No app for <bundle id>**: create it in App Store Connect, then rerun.
 - **`ENTITY_ERROR.RELATIONSHIP.INVALID` on appAvailabilities**: Apple wants every territory in the request
   (available true or false); `ios check fix:true` already sends them all.
+- **CocoaPods could not find compatible versions for pod "Firebase/CoreOnly"** (with "specs repository is too
+  out-of-date") right after the Firebase Flutter plugins were upgraded: a committed `ios/Podfile.lock` still pins the
+  old Firebase SDK. Most Flutter apps ignore that file; if `.gitignore` lists it, `git rm ios/Podfile.lock`, push and
+  release again (SpinLab, 2026-10-24). If the app deliberately tracks it, run `pod update Firebase` on a Mac checkout.
+- **The train version is closed / version already live**: an App Store version that Apple approved takes no new
+  builds. When `ios status` shows the pubspec version live, bump the patch in pubspec (both stores share it), commit,
+  then release.
+- **ios setup: the profile lacks <entitlement>**: a capability in Runner.entitlements has no API (App Attest):
+  ship-declare section 4 has the click path.
 - **Profile / certificate errors**: rerun `$FL ios setup`; it remakes an expired or revoked certificate or profile and
   pushes it to the vault.

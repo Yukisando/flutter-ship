@@ -101,6 +101,11 @@ Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, lis
   step: `$FL appcheck_ios` sends the vault key to Firebase App Check (`deviceCheckConfig` PATCH, nothing printed).
   The app's code must use `AppleDeviceCheckProvider` (or `AppleProvider.deviceCheck` in firebase_app_check 0.3).
   App Attest registrations do not show in the API, so ship_status only sees DeviceCheck.
+- iOS (App Attest): the toggle in Firebase plus the App ID capability. The App Store Connect API has no APP_ATTEST
+  capabilityType, so `ios setup` skips it and then checks that the profile grants every key of Runner.entitlements.
+  When it says the profile lacks `appattest-environment`: developer.apple.com > Identifiers > the App ID > tick
+  **App Attest** (not "App Attest Opt-In") > Save > Confirm (it invalidates the profiles), then `ios setup` again,
+  which makes a fresh profile. Done this way for SpinLab, 2026-10-24.
 - Push apps: the team APNs key in Firebase > Project settings > Cloud Messaging
   (`console.firebase.google.com/u/<n>/project/<id>/settings/cloudmessaging`; `u/<n>` is the Google account that
   owns the project, try u/0 then u/1) > Apple app > Production APNs auth key > Upload. There is no API. With the
@@ -116,11 +121,20 @@ Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, lis
   budget when a project moves to Blaze, so the lane usually only confirms it; ship_status reads budgets live. The
   Budget API is billed to the app's project and is off there at first: the lane turns it on (serviceusage) and waits.
   Email alerts to billing admins at 50/90/100 %, never a cap. Console: `console.cloud.google.com/billing/<acct>/budgets`.
+  `billingbudgets.googleapis.com: HTTP 403 The caller does not have permission` = the ADC account has no role on the
+  project's billing account (a client's own account, e.g. SpinLab 010ABA-819587-953A3C). Read the account with
+  `cloudbilling.googleapis.com/v1/projects/<id>/billingInfo`; the account's admin adds the budget (or grants Billing
+  Account Costs Manager). Claude does not ask for or change billing IAM; list it as a You step.
 - App Privacy state (Claude, read only): in any App Store Connect tab, `/iris/v1/apps?filter[bundleId]=<bundle>` for
   the id, then `/iris/v1/apps/<id>/dataUsages?limit=500` (rows) and `/iris/v1/apps/<id>/dataUsagePublishState`
   (`published`). Compare the rows to `app_privacy:` before running apple_privacy.js (it deletes and rewrites), and
   record `ios_app_privacy` when `published` is true. Publish itself stays the user's click.
 - Before filling Play forms, open App content > Actioned: forms done earlier are listed there with their date.
+- Functions (Claude, no deploy): wire every `onCall` with `enforceAppCheck` read from a switch that stays off,
+  `const enforceAppCheck = process.env.ENFORCE_APP_CHECK === "true";` then `onCall({ ..., enforceAppCheck }, ...)`
+  (Badalone in TypeScript, SpinLab in `functions/index.js`). ship_status then says "wired but off". Turning it on is
+  `ENFORCE_APP_CHECK=true` in functions/.env (or the repository's `FUNCTIONS_DOTENV` secret when a workflow deploys)
+  plus a deploy: enforcement, so the user's go. `onRequest` endpoints (webhooks, checkout) are not covered.
 - Enforcement (Firestore, Storage, Authentication in App Check > APIs; `enforceAppCheck` on Functions callables) comes
   last, on the user's go, once the release that sends tokens is what users run: see ship-status.
 - Release builds must activate App Check with the real providers and debug builds with the debug ones

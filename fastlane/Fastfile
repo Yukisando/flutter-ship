@@ -705,6 +705,7 @@ end
 #   apple/profiles/<bundle>.json.enc     App Store profile {id, uuid, name, content, expires}
 
 require 'base64'
+require 'rexml/document'
 
 module Ship
   MAC = RUBY_PLATFORM.include?('darwin')
@@ -772,6 +773,10 @@ module Ship
     text
   end
 
+  # Capabilities the App Store Connect API cannot enable (no capabilityType): tick them by hand in
+  # developer.apple.com > Identifiers > the App ID. ensure_profile! then checks the profile carries them.
+  PORTAL_ONLY_CAPABILITIES = %w[APP_ATTEST].freeze
+
   # Registers the bundle id with the capabilities the app needs. Idempotent.
   def ensure_bundle_id!
     connect_asc!
@@ -784,6 +789,7 @@ module Ship
     have = bid.get_capabilities.map(&:capability_type)
     (ios['capabilities'] || ['PUSH_NOTIFICATIONS']).each do |cap|
       next if have.include?(cap)
+      next if PORTAL_ONLY_CAPABILITIES.include?(cap) # checked on the profile instead
       bid.create_capability(cap)
       UI.success("Enabled #{cap} on #{bundle_id}")
     end
@@ -878,7 +884,9 @@ module Ship
     p = profile
     if p && p['certificate_id'] == dist['id'] && still_valid?(p['expires'])
       live = Spaceship::ConnectAPI::Profile.all(filter: { id: p['id'] }).first
-      return p if live && live.profile_state == 'ACTIVE'
+      if live && live.profile_state == 'ACTIVE' && profile_missing_entitlements(p).empty?
+        return p
+      end
     end
     name = "flutter-ship #{bundle_id} AppStore"
     Spaceship::ConnectAPI::Profile.all(filter: { name: name }).each(&:delete!)
@@ -889,7 +897,26 @@ module Ship
     Vault.write(Vault.profile_path(bundle_id), JSON.generate(p))
     Vault.publish!("App Store profile for #{bundle_id}")
     UI.success("Created profile '#{name}' (expires #{p['expires'][0, 10]})")
+    missing = profile_missing_entitlements(p)
+    unless missing.empty?
+      UI.user_error!("The new profile lacks #{missing.join(', ')} from Runner.entitlements: "                      'add the capability to ios.capabilities in ship.yml, or tick it on the App ID in '                      'developer.apple.com > Identifiers (App Attest has no API), then run `ios setup` again')
+    end
     p
+  end
+
+  # Entitlement keys of ios/Runner/Runner.entitlements that the profile does not grant.
+  def profile_missing_entitlements(p)
+    file = File.join(root, 'ios', 'Runner', 'Runner.entitlements')
+    return [] unless File.exist?(file) && p['content']
+    plist_keys = lambda do |dict|
+      dict ? dict.elements.to_a('key').map(&:text) : []
+    end
+    want = plist_keys.call(REXML::Document.new(File.read(file)).elements['plist/dict'])
+    xml = Base64.decode64(p['content'])[/<\?xml.*<\/plist>/m]
+    return [] unless xml
+    top = REXML::Document.new(xml).elements['plist/dict']
+    ent = top.elements.to_a.each_cons(2).find { |k, _| k.name == 'key' && k.text == 'Entitlements' }&.last
+    want - plist_keys.call(ent)
   end
 
   def asc_app
