@@ -120,6 +120,10 @@ macOS runner as a zip on a draft GitHub release.
 - **Invalid large app icon ... alpha channel**: flatten the AppIcon PNGs (no transparency).
 - **SDK version issue**: the runner's Xcode is too old for App Store Connect: update Xcode on the Mac
   (App Store), or use a newer `macos-*` image on GitHub.
+- **"Command CodeSign failed" or "No signing certificate ... with a private key" on the Mac**, while another app's
+  iOS build ran at the same time: builds before 0.5.11 shared the user keychain search list and reset it under each
+  other. The lane now queues them with a lock file on the Mac (`~/.ship-ios-signing.lock`): rerun the failed one.
+  Start only one iOS build per Mac at a time when several sessions ship at once.
 - **"The Mac is offline"**: wake it (charger, logged in), or `runner:github` for this build.
 - **`pod install` says the specs repository is too out-of-date**: the Mac workflow refreshes specs before
   building; an app on an older `ios-release.yml` needs the current template.

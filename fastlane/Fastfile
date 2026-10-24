@@ -1000,7 +1000,15 @@ module Ship
   end
 
   # Installs the vault certificate and profile in a throwaway keychain (macOS only).
+  # One build at a time per Mac: every app's runner shares the user keychain search list, and a second build
+  # resets it under the first ("Command CodeSign failed", "No signing certificate found"). GitHub concurrency
+  # groups do not span repositories, so a lock file on the Mac queues the builds instead.
   def with_ios_signing(dist, prof)
+    lock = File.open(File.join(Dir.home, '.ship-ios-signing.lock'), File::RDWR | File::CREAT, 0o600)
+    unless lock.flock(File::LOCK_EX | File::LOCK_NB)
+      UI.message('Another iOS build is signing on this Mac: waiting for it to finish')
+      lock.flock(File::LOCK_EX)
+    end
     dir = Dir.mktmpdir('ship-ios-')
     keychain = File.join(dir, 'ship.keychain-db')
     kc_pass = SecureRandom.alphanumeric(24)
@@ -1028,6 +1036,7 @@ module Ship
       Open3.capture2e('security', 'delete-keychain', keychain)
       FileUtils.rm_rf(dir)
     end
+    lock&.close
   end
 
   def build_ipa(name, number, dist, prof)
