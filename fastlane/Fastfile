@@ -1629,6 +1629,13 @@ module Ship
       rescue StandardError => e
         [:unknown, e.message.lines.first.to_s.strip[0, 160]]
       end
+      # ship.yml `hold: {step: reason}`: a step the user parks on purpose (e.g. an App Store review that waits on
+      # paperwork) shows as waiting with that reason instead of a to-do.
+      reason = (app['hold'] || {})[id]
+      if reason && %i[todo unknown].include?(state.to_sym)
+        detail = "on hold: #{reason}#{detail ? " (#{detail})" : ''}"
+        state = :wait
+      end
       items << { id: id, group: group, title: title, state: state.to_s, detail: detail, how: how || RECORDED[id] }
     end
     recorded = ->(id) { done[id] ? [:ok, "done #{done[id]}"] : [:todo, nil] }

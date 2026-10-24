@@ -23,6 +23,10 @@ records it (`android data_safety` does so itself), and anything done by hand is 
 Record a step only after it was done and checked, never on the user's guess. Play forms a live production
 app must have (Data safety, App content, category) and App Privacy of an app Apple reviewed count as done.
 
+A step the user parks on purpose goes in `fastlane/ship.yml` as `hold: {<step id>: <reason>}` (e.g. `ios_live:
+TestFlight only until ...`): the lane shows it `[~]` with the reason, the board counts it as waiting, and no skill
+works on it (no submission, no fix) until the user removes the line.
+
 **Every ship-* skill ends with `$FL ship_status`** so the record never drifts, and the next step is whatever
 the first `[ ]` line says. Do the `Claude:` steps yourself (ship-declare covers the browser ones); list the
 `You:` steps for the user with their exact place, in store order.
