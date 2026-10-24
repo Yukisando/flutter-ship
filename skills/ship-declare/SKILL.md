@@ -124,8 +124,20 @@ Functions in bulk. `$FL ship_status` shows each step; do the `Claude:` ones, lis
 - Enforcement (Firestore, Storage, Authentication in App Check > APIs; `enforceAppCheck` on Functions callables) comes
   last, on the user's go, once the release that sends tokens is what users run: see ship-status.
 - Release builds must activate App Check with the real providers and debug builds with the debug ones
-  (`AndroidDebugProvider`, `AppleDebugProvider`), whose tokens go in App Check > Manage debug tokens. Phones only:
-  skip web (no reCAPTCHA key) and desktop, and wrap `activate` in try/catch so a failure never blocks startup.
+  (`AndroidDebugProvider`, `AppleDebugProvider`, `WebDebugProvider()`), whose tokens go in App Check > Manage debug
+  tokens. Skip desktop, and wrap `activate` in try/catch so a failure never blocks startup.
+- Web (Claude, API, any app served on the web): a reCAPTCHA Enterprise **score** key, then register it. With ADC
+  and `x-goog-user-project: <project id>`: enable `recaptchaenterprise.googleapis.com` (serviceusage `:enable`),
+  `POST recaptchaenterprise.googleapis.com/v1/projects/<id>/keys` with `webSettings.integrationType: SCORE` and
+  `allowedDomains` = every host that serves a client using that Firebase **web app id** (hosting sites, custom
+  domains, preview/staging channels such as `<site>--staging-<hash>.web.app`, `*.firebaseapp.com`, an admin portal
+  or App Hosting `*.hosted.app` that reuses the same web app id, and `localhost`; subdomains match, other labels do
+  not), then `PATCH firebaseappcheck.googleapis.com/v1/projects/<id>/apps/<web app id>/recaptchaEnterpriseConfig
+  ?updateMask=siteKey` with `{"siteKey": ...}`. The site key is public: a constant in the app code is fine. Code:
+  `providerWeb: kDebugMode ? WebDebugProvider() : ReCaptchaEnterpriseProvider(siteKey)`. Check every other web
+  client of the same project (a Next.js admin on the JS SDK needs `initializeAppCheck` with
+  `ReCaptchaEnterpriseProvider` too), or enforcement locks it out. Cost: reCAPTCHA Enterprise is free up to 10,000
+  assessments a month; one assessment per token, default TTL 1 hour per browser session.
 
 ## 5. First production release (when the user asks to go live)
 
@@ -157,14 +169,32 @@ and you made it); never restart a review that was already waiting, it puts the a
 
 ## 7. App Check enforcement (on the user's go, per app and per service)
 
-Enforce a service only if all hold, else hold it back and say why:
-- every production build people run sends tokens: Play production and the App Store build (live or in review)
-  contain the `FirebaseAppCheck.instance.activate` commit (`git merge-base --is-ancestor <commit> <release tag>`);
-- every platform is registered (App Check > Apps shows no "Register remaining apps" banner): an unregistered iOS
-  app (no DeviceCheck key) gets no valid token, so enforcement locks iOS out;
-- no web client is served without App Check (a `kIsWeb` skip plus a live `*.web.app` means hold);
-- App Check > APIs (`/u/<n>/project/<id>/appcheck/products`, the owner account) shows mostly verified requests;
-  "Metrics will be displayed when ..." means no data yet: hold;
-- the user's debug builds have their debug tokens in App Check > Apps > Manage debug tokens.
-Functions: `ENFORCE_APP_CHECK=true` in `functions/.env`, deploy with `FUNCTIONS_DISCOVERY_TIMEOUT=60` and the app's
-own gcloud quota project.
+Registration is safe; enforcement refuses every client that sends no valid token. Read the state first:
+`GET firebaseappcheck.googleapis.com/v1beta/projects/<id>/services/<service>` (no `enforcementMode` = OFF).
+
+Hold enforcement until **all** of these hold, and say which one is missing:
+1. Every client people run sends tokens:
+   - Android: the Play **production** release contains the `FirebaseAppCheck.instance.activate` commit
+     (`git merge-base --is-ancestor <commit> <release tag>`), and most installs have updated (Play Console >
+     Statistics > by app version; old versions get no token and break on enforcement).
+   - iOS: same for the App Store build, with a DeviceCheck (or App Attest) key registered for the iOS app.
+   - Web: the deployed web build activates `ReCaptchaEnterpriseProvider` with a key registered for the web app, and
+     every host that serves it is in the key's allowed domains. Also every other web client on the same project
+     (admin portal, landing page with Firebase calls). A `kIsWeb` skip on a live site means hold.
+   - App Check > Apps shows no "Register remaining apps" banner.
+2. Metrics: App Check > APIs (`/u/<n>/project/<id>/appcheck/products`, the owner account), per service, show
+   **verified requests above ~95%** for **at least 3 days in a row** after the last client shipped. "Metrics will be
+   displayed when ..." means no data yet: hold. Unverified traffic left over is old app versions, scripts or bots:
+   look at which before going on.
+3. Debug tokens: the user's own debug builds (each phone, emulator and browser that runs debug builds) are in App
+   Check > Apps > Manage debug tokens, so development keeps working after enforcement.
+4. Then enforce **one service at a time**, in this order, with a day or more between each:
+   **Storage first** (least damage if wrong: images fail, data stays), **then Firestore**, **then Authentication**
+   (enforcing it blocks sign-in for clients without tokens, the worst failure). For each: App Check > APIs > the
+   service > Enforce (or `PATCH .../services/<service>?updateMask=enforcementMode` with
+   `{"enforcementMode":"ENFORCED"}`, only on the user's go), then watch for an hour: the APIs page (rejected
+   requests should be only the unverified share seen before), the web app and both phone apps loading data and
+   images, signing in, and Crashlytics / client error logs. Rollback is instant: Unenforce (`"OFF"`).
+5. Functions callables: `enforceAppCheck: true` (or `ENFORCE_APP_CHECK=true` in `functions/.env`), deploy with
+   `FUNCTIONS_DISCOVERY_TIMEOUT=60` and the app's own gcloud quota project, after the three services are stable.
+`$FL ship_status` reads enforcement live (`appcheck_enforced`): run it after each service.
