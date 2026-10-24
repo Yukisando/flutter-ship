@@ -2353,7 +2353,14 @@ platform :ios do
     if info
       cat = Ship.asc_get("v1/appInfos/#{info['id']}/primaryCategory")&.dig('data', 'id')
       check.call('Primary category', cat, cat)
-      check.call('Age rating', Ship.asc_get("v1/appInfos/#{info['id']}/ageRatingDeclaration")&.dig('data'))
+      # Apple adds age rating questions over time; an unanswered one is null and blocks Add for Review
+      # ("You must respond to the required age ratings questions").
+      age = Ship.asc_get("v1/appInfos/#{info['id']}/ageRatingDeclaration")&.dig('data', 'attributes') || {}
+      optional = %w[kidsAgeBand gracRatingClassificationNumber developerAgeRatingInfoUrl ageRatingOverride
+                    ageRatingOverrideV2 koreaAgeRatingOverride seventeenPlus unrestrictedWebAccess]
+      unanswered = age.reject { |k, v| optional.include?(k) || !v.nil? }.keys
+      check.call('Age rating', !age.empty? && unanswered.empty?,
+                 unanswered.empty? ? nil : "unanswered: #{unanswered.join(', ')} (App Information > Age Ratings > Edit)")
       Ship.asc_get("v1/appInfos/#{info['id']}/appInfoLocalizations")['data'].each do |loc|
         l = loc['attributes']
         check.call("Privacy policy URL #{l['locale']}", !l['privacyPolicyUrl'].to_s.empty?, l['privacyPolicyUrl'])

@@ -162,6 +162,16 @@ and you made it); never restart a review that was already waiting, it puts the a
 - Add for Review: `$FL ios check build:<n>` first (it must print no missing item), then
   `/apps/<apple id>/distribution/ios/version/inflight` > Add for Review (top right) > the Draft Submission panel
   lists the version > Submit for Review > "1 Item Submitted". `ios status` then shows WAITING_FOR_REVIEW.
+- Age rating: Apple adds questions (parental controls, age assurance, messaging, advertising, ...). An unanswered
+  one blocks Add for Review with "You must respond to the required age ratings questions", and `ios check` names
+  it. Answer in App Information (`/apps/<id>/distribution/info`) > Age Ratings > Set Up / Edit: a 7-step dialog of
+  radio groups named after the attributes (`value` "false"/"true" or "NONE"/"INFREQUENT_OR_MILD"/...). Answer
+  from the app's content (the user decides anything that is a judgment), step by step (clicking Next detaches the
+  script), then read back `/iris/v1/apps/<id>/appInfos?include=ageRatingDeclaration`.
+- A rejected submission: `/iris/v1/reviewSubmissions?filter[app]=<id>` shows state UNRESOLVED_ISSUES; the message is
+  on `/apps/<id>/distribution/reviewsubmissions/details/<submission id>` (`get_page_text`). Fix metadata or code
+  yourself; a guideline that asks for a business or legal answer (5.1.1(ix) seller / organization account, proof of
+  authorization) is the user's: quote it and stop.
 - Never on an app whose version is already WAITING_FOR_REVIEW or IN_REVIEW: a new version, another build, a
   metadata save or a resubmission there can cancel the review. Read `ios status` first.
 - Sign-in for review with a demo account: the user types the password in App Store Connect > App Review
