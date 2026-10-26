@@ -7,9 +7,12 @@
 #   pwsh -ExecutionPolicy Bypass -File scripts\pc-runner.ps1 exploreum-app SpinLabApp ...
 # Safe to re-run: a repo that already has a runner only gets its .env/.path refreshed and a restart.
 # Registration tokens come from `gh` (the signed-in user) and are never printed.
+# Every bare argument is a repo; the owner only ever comes from -Owner.
+[CmdletBinding(PositionalBinding = $false)]
 param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Repos, [string]$Owner)
 $ErrorActionPreference = 'Stop'
 if (-not $Owner) { $Owner = gh api user --jq .login }
+Write-Host "Owner $Owner, repos: $($Repos -join ', ')"
 $root = 'C:\actions-runners'
 $shared = "$root\_shared"
 New-Item -ItemType Directory -Force "$root\_dl" | Out-Null
@@ -70,7 +73,7 @@ foreach ($repo in $Repos) {
     New-Item -ItemType Directory -Force $dir | Out-Null
     Expand-Archive $zip $dir -Force
     $token = gh api -X POST "repos/$Owner/$repo/actions/runners/registration-token" --jq .token
-    if (-not $token) { throw "No registration token for $Owner/$repo" }
+    if ($LASTEXITCODE -or -not $token) { throw "No registration token for $Owner/$repo (does the repo exist?)" }
     & "$dir\config.cmd" --unattended --url "https://github.com/$Owner/$repo" --token $token `
       --name ship-pc --labels ship-pc --work _work --runasservice --replace
     $token = $null
