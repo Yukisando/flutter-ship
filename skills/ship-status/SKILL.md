@@ -42,6 +42,10 @@ The dashboard is a Dashboard artifact; its link is `ship_board_url` in `~/.ship/
    `source.name` and `updated: {at, by: "ship_board.py"}`. The page itself does not change.
 3. Say in a few lines which apps are all green and the open steps worth doing today, `You:` ones first.
 
+Websites listed under `websites:` in `~/.ship/config.yml` (coldsnap.fr) get their own rows, group Website: HTTPS,
+redirects, sitemap, Search Console, a portfolio entry for every app with ship.yml, the `?v=` asset stamp and each
+app's privacy page, all read live by `ship_board.py`. A missing portfolio entry is Claude's to add.
+
 The page has a **Today** list: Nathan's open steps whose own prerequisites are done, ranked by how many open
 steps of the same app wait on them, then by minutes. The order and the minutes live in `ship_board.py`
 (`AFTER`, `MINUTES`, `YOURS`): add a new step there when you add one to the lane. The Open steps table filters by
