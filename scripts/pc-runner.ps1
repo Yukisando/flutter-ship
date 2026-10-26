@@ -49,6 +49,7 @@ $path = @(
   'C:\Program Files\GitHub CLI',
   $machinePath
 ) -join ';'
+# PATH goes in .env: the Windows runner ignores .path when it looks up `bash`.
 # npm scripts run in Git Bash like on Linux; checkouts keep LF like on Linux.
 $envFile = @"
 RUNNER_TOOL_CACHE=$shared\tool
@@ -65,6 +66,7 @@ GIT_CONFIG_KEY_0=core.autocrlf
 GIT_CONFIG_VALUE_0=false
 GIT_CONFIG_KEY_1=core.longpaths
 GIT_CONFIG_VALUE_1=true
+PATH=$path
 "@
 
 foreach ($repo in $Repos) {
@@ -72,6 +74,9 @@ foreach ($repo in $Repos) {
   if (-not (Test-Path "$dir\.runner")) {
     New-Item -ItemType Directory -Force $dir | Out-Null
     Expand-Archive $zip $dir -Force
+    # Before config.cmd: it starts the service, which may take a queued job at once.
+    Set-Content "$dir\.env" $envFile -Encoding ascii
+    Set-Content "$dir\.path" $path -Encoding ascii
     $token = gh api -X POST "repos/$Owner/$repo/actions/runners/registration-token" --jq .token
     if ($LASTEXITCODE -or -not $token) { throw "No registration token for $Owner/$repo (does the repo exist?)" }
     & "$dir\config.cmd" --unattended --url "https://github.com/$Owner/$repo" --token $token `
