@@ -194,6 +194,65 @@ always come from the machine that asks (`RUNNER_TOKEN`). The Mac can also run th
 (`bundle exec fastlane ios release` builds and uploads locally) when it has the vault and its
 passphrase.
 
+## Other CI jobs on your Windows PC
+
+Every job that needs no Apple device (web deploys, Firebase rules and functions, APK builds, cron
+checks) can run on your own Windows PC instead of GitHub's `ubuntu-latest`: no billed minutes, but
+the PC must be on. iOS stays on the Mac above.
+
+Once per PC, in an elevated PowerShell (services need admin), with `gh` signed in:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File scripts\pc-runner.ps1 exploreum-app SpinLabApp Kokoh
+```
+
+For each repo it registers a runner named `ship-pc` (labels `self-hosted, Windows, X64, ship-pc`)
+as a Windows service under `C:\actions-runners\<repo>`. A personal account cannot share runners
+between repos, so each repo gets its own idle service. The services run as `NETWORK SERVICE` and
+start on boot. Re-running the script with a new repo adds it; with an existing one it refreshes the
+environment and restarts the service. The services share `C:\actions-runners\_shared`:
+
+- Flutter, Java and the Android SDK come from the usual setup actions (`subosito/flutter-action`,
+  `actions/setup-java`, `android-actions/setup-android`) into the shared tool cache, so your own
+  Flutter and SDK are never touched by CI and never block a local build;
+- pub, Gradle and npm caches; `npm install -g` lands in `_shared\npm-global`, which is on PATH;
+- `shell: bash` is Git Bash, npm scripts run in Git Bash, checkouts keep LF.
+
+Then point the repo's workflows at the PC, the same way `IOS_RUNNER` points iOS at the Mac:
+
+```bash
+gh variable set PC_RUNNER -R OWNER/REPO --body '["self-hosted","Windows","ship-pc"]'
+```
+
+```yaml
+defaults:
+  run:
+    shell: bash                # Git Bash on the PC, bash on ubuntu
+jobs:
+  deploy:
+    # This PC when the repo variable PC_RUNNER is set, else GitHub's ubuntu-latest.
+    runs-on: ${{ fromJSON(vars.PC_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: ${{ runner.environment == 'github-hosted' }}   # the PC keeps Flutter itself
+      - name: Set up Android SDK (self-hosted)                  # APK builds only
+        if: runner.environment == 'self-hosted'
+        uses: android-actions/setup-android@v3
+```
+
+Things that differ from ubuntu: there is no `google-chrome` (Edge is there); Linux-only tools
+need `if: runner.os == 'Linux'`; files written into the workspace (keys, `functions/.env`) stay on
+disk until the next checkout, so remove them in an `if: always()` step. A scheduled workflow uses
+the copy on the default branch, so a cron job moves to the PC only once the change is merged.
+Unset `PC_RUNNER` to go back to GitHub. On a public repo, set fork pull request workflows to need
+approval for all outside contributors, or a fork could run code on the PC.
+
+Manage the services with `Get-Service actions.runner.*`; remove one with
+`C:\actions-runners\<repo>\config.cmd remove --token <removal token>` in an elevated shell
+(`gh api -X POST repos/OWNER/REPO/actions/runners/remove-token --jq .token`).
+
 ## CI (later)
 
 Set `SHIP_VAULT_PASSWORD` (and `SHIP_VAULT_DIR` to a checkout of the vault), give the job read access to the vault repo, and run `bundle exec fastlane android release`. Alternatively, set `SHIP_PLAY_JSON` to a key file path to bypass the vault for Play access.

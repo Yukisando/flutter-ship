@@ -75,6 +75,20 @@ If the user has no key yet:
 3. Play Console > Users and permissions > Invite new user: the service account email. Give it these permissions: Admin (all apps), or at least Release apps, Manage store presence, View app information.
 4. New service accounts can take up to 24 hours before Play accepts them.
 
+## 5. Optional: this machine as a CI runner
+
+Only when the user asks for it (no billed GitHub minutes, but the machine must stay on).
+
+- **Mac** (iOS builds): `scripts/mac-runner.sh`, README "iOS builds on your own Mac".
+- **Windows PC** (every other job: web deploys, Firebase, APK builds, cron checks): README "Other CI
+  jobs on your Windows PC". Installing services needs an elevated shell, which Claude cannot open:
+  give the user `pwsh -ExecutionPolicy Bypass -File $PLUGIN\scripts\pc-runner.ps1 <repo> <repo> ...`
+  to run in an admin PowerShell. Then `gh api repos/<owner>/<repo>/actions/runners` shows `ship-pc`
+  online; set the repo variable `PC_RUNNER` to `["self-hosted","Windows","ship-pc"]` and make each
+  workflow read it (`runs-on: ${{ fromJSON(vars.PC_RUNNER || '"ubuntu-latest"') }}`,
+  `defaults: run: shell: bash`). Commit workflow changes on a non-production branch, test with a
+  preview or dry-run, and merge to a branch that deploys production only on the user's go.
+
 ## Why a vault
 
 Upload keys get lost, or differ between machines. Each app's upload key and its passwords are encrypted with AES-256-GCM (key derived with PBKDF2 from the passphrase) and pushed to the private repo. Lanes decrypt the key into a temp folder only for the build. Google Play App Signing holds the real app signing key, so a lost upload key can still be reset in Play Console (App integrity > Upload key > Request reset). The vault exists so that never has to happen.
