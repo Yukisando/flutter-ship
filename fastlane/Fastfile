@@ -1394,7 +1394,8 @@ module Ship
            elsif e.status_code == 403
              "The service account needs 'Manage store presence' on this app (Play Console > Users and permissions)."
            end
-    UI.user_error!("Play refused #{p['id']}: #{e.message}#{hint ? "\n#{hint}" : ''}")
+    detail = (JSON.parse(e.body.to_s).dig('error', 'message') rescue nil)
+    UI.user_error!("Play refused #{p['id']}: #{detail || e.message}#{hint ? "\n#{hint}" : ''}")
   end
 
   # Every App Store territory with its currency, e.g. { 'FRA' => 'EUR' }.
