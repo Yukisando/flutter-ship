@@ -182,8 +182,9 @@ def main() -> None:
                 "app": report["app"], "folder": report["folder"], "checked_at": report["checked_at"],
                 "group": item["group"], "step": item["id"], "title": item["title"], "state": item["state"],
                 "detail": item.get("detail") or "", "how": item.get("how") or "",
-                "who": who(item["id"], item.get("how") or ""), "after": ",".join(AFTER.get(item["id"], [])),
-                "minutes": MINUTES.get(item["id"], 5),
+                "who": who(item["id"], item.get("how") or ""),
+                "after": ",".join(item.get("after") or AFTER.get(item["id"], [])),
+                "minutes": item.get("minutes") or MINUTES.get(item["id"], 5),
             })
         print(f"{app.name}: {report['ok']}/{report['total']}")
     only = {n for n in args.only.split(",") if n}

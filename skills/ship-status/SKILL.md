@@ -27,6 +27,22 @@ A step the user parks on purpose goes in `fastlane/ship.yml` as `hold: {<step id
 TestFlight only until ...`): the lane shows it `[~]` with the reason, the board counts it as waiting, and no skill
 works on it (no submission, no fix) until the user removes the line.
 
+One-off work for one app (a reply to App Review, a form to resend, a decision to take) goes in `fastlane/ship.yml`
+as `todo:` entries `{id, title, how, after: [ids], minutes}`, group "To do". `how` starts with `You:` or `Claude:`
+like the built-in steps. Each shows `[ ]` until `$FL ship_status done:<id>` records it; the board ranks it with
+`after` and `minutes`. Delete finished entries once their done date is in ship-done.yml (the row stays done).
+
+The `own_site` step (group Listing) checks that `privacy_url` answers 200 and is not on the shared personal site
+(`legal.generic_url` in config.yml). Recipe, as done for Badalone, Seba, Sandlog, Pygmak, Badger and Patoune
+(2026-10-26/27): a Flutter web app adds `web/privacy.html` (+ `delete-account.html`, a `legal.css`) served by its
+existing Hosting site; any other app gets a static `site/` folder (index with store link and support, privacy, and
+terms / delete-account when it has accounts) in the app's own look, `firebase.json` `hosting.public: site` with
+`cleanUrls`, on the app's Firebase project or a new free one (`firebase projects:create <app>-app`). Then
+firebase-custom-domain for `<app>.coldsnap.fr`, switch `privacy_url`, `account_deletion_url`, `website`,
+declarations.yml and the iOS `*_url.txt`, `ios metadata`, and the Play privacy policy (ship-declare). Save the Play
+URL only once the certificate is ACTIVE: a URL saved before keeps "Failed to validate your privacy policy page's
+SSL certificate" until it is saved again (save the old URL, then the new one).
+
 **Every ship-* skill ends with `$FL ship_status`** so the record never drifts, and the next step is whatever
 the first `[ ]` line says. Do the `Claude:` steps yourself (ship-declare covers the browser ones); list the
 `You:` steps for the user with their exact place, in store order.

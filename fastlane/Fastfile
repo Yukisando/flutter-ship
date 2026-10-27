@@ -1533,6 +1533,9 @@ module Ship
 
   def done_path = File.join(fastlane_dir, DONE_FILE)
 
+  # ship.yml `todo:` one-off tasks for this app ({id, title, how, after, minutes}), shown until `done:<id>`.
+  def todos = Array(app['todo']).select { |t| t.is_a?(Hash) && t['id'] }
+
   def done
     @done ||= File.exist?(done_path) ? (YAML.safe_load(File.read(done_path), permitted_classes: [Date]) || {}) : {}
   end
@@ -1540,7 +1543,8 @@ module Ship
   # Records a step as done today (additive: an existing date is kept).
   def record_done!(*ids)
     ids.flatten.map(&:to_s).each do |id|
-      UI.user_error!("Unknown step '#{id}'. Recorded steps: #{RECORDED.keys.join(', ')}") unless RECORDED.key?(id)
+      known = RECORDED.keys + todos.map { |t| t['id'].to_s }
+      UI.user_error!("Unknown step '#{id}'. Recorded steps: #{known.join(', ')}") unless known.include?(id)
       done[id] ||= Date.today.to_s
     end
     header = "# Store and Firebase steps no API can read, with the day they were done (flutter-ship `ship_status`).\n"
@@ -1771,6 +1775,27 @@ module Ship
         functions_enforcement || :na
       end
       add.call('budget_alert', 'Security', 'Billing budget alert') { budget_alert_state || recorded.call('budget_alert') }
+    end
+
+    # Each app keeps its privacy page on its own site (<app>.coldsnap.fr on Firebase Hosting), never the shared
+    # one on the personal website: App Review reads one policy for many apps as a sign of template apps
+    # (guideline 4.3, Badalone/Seba/Sandlog/Pygmak, 2026-10-26).
+    add.call('own_site', 'Listing', "Privacy page on the app's own site",
+             'Claude: site/ (or web/privacy.html for a Flutter web app) on Firebase Hosting with <app>.coldsnap.fr ' \
+             '(firebase-custom-domain), then privacy_url, the store URLs and the Play privacy policy (ship-declare)') do
+      url = app['privacy_url'].to_s
+      next [:todo, 'no privacy_url in ship.yml'] if url.empty?
+      shared = URI(machine.dig('legal', 'generic_url').to_s).host
+      next [:todo, "on the shared site #{shared}"] if shared && URI(url).host == shared
+      code = Net::HTTP.get_response(URI(url)).code
+      code == '200' ? [:ok, URI(url).host] : [:todo, "#{url} answers #{code}"]
+    end
+
+    # One-off tasks from ship.yml `todo:`, done once recorded with `ship_status done:<id>`.
+    todos.each do |t|
+      id = t['id'].to_s
+      add.call(id, 'To do', t['title'] || id, t['how']) { recorded.call(id) }
+      items.last.merge!(after: Array(t['after']).map(&:to_s), minutes: t['minutes'])
     end
     items
   end
