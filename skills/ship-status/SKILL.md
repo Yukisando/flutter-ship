@@ -41,7 +41,7 @@ terms / delete-account when it has accounts) in the app's own look, `firebase.js
 firebase-custom-domain for `<app>.coldsnap.fr`, switch `privacy_url`, `account_deletion_url`, `website`,
 declarations.yml and the iOS `*_url.txt`, `ios metadata`, and the Play privacy policy (ship-declare). Save the Play
 URL only once the certificate is ACTIVE: a URL saved before keeps "Failed to validate your privacy policy page's
-SSL certificate" until it is saved again (save the old URL, then the new one).
+SSL certificate" even after re-saving it: serve the same page at a second path (`firebase.json` rewrite `/privacy-policy` -> `/privacy.html`) and save that URL in Play (Pygmak, 2026-10-27). A new release on the app also clears it (Sandlog).
 
 **Every ship-* skill ends with `$FL ship_status`** so the record never drifts, and the next step is whatever
 the first `[ ]` line says. Do the `Claude:` steps yourself (ship-declare covers the browser ones); list the
