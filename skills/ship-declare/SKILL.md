@@ -21,6 +21,12 @@ Play only accepts App content changes for an app that exists in Play Console; Ap
 It replaces the whole form. Verify once: App content > Data safety > Export to CSV, and compare the values.
 When Play adds questions, export a blank form from any app and replace the template.
 
+**One field on an app without `declarations.yml`** (a client app, e.g. a new account-deletion URL): never click
+through the 5-step wizard (an intro carousel opens first, Save is only on step 5). Export to CSV from the Data
+safety page (or ask the user for it), change the row (`PSL_ACCOUNT_DELETION_URL` for the deletion link), then
+either Import from CSV on the same page or turn it into `data_safety:` and run the lane. Either way it lands as
+"Complete Data safety questionnaire" in Publishing overview and is sent for review on the user's go.
+The privacy policy URL is a separate one-field form (`app-content/privacy-policy`).
 ## 2. Apple App Privacy (the user's App Store Connect session)
 
 Apple's API has no App Privacy endpoint. App Store Connect's own web API does, and it works from any page of
