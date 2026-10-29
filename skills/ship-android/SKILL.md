@@ -1,6 +1,6 @@
 ---
 name: ship-android
-description: Release a Flutter app to Google Play with flutter-ship - next version code, signed bundle from the vault key, release notes, upload as a draft on the test track, and on request promotion to production. Use when the user says ship, release, publish, upload or deploy the Android app, asks for a new Play build, asks what is live, or asks to promote a build to production.
+description: Release a Flutter app to Google Play with flutter-ship - next version code, signed bundle from the vault key, release notes, upload to internal testing, rolled out at once, and on request promotion to production. Use when the user says ship, release, publish, upload or deploy the Android app, asks for a new Play build, asks what is live, or asks to promote a build to production.
 ---
 
 # Release to Google Play
@@ -14,11 +14,13 @@ If `fastlane/ship.yml` is missing, follow ship-init first.
 1. `git status`. Uncommitted changes would ship without a matching commit, so commit them or ask the user.
 2. `$FL android version` prints the version name (from pubspec) and the next version code. Play is the source of truth: highest code ever uploaded + 1. An app also on the App Store shares the number with iOS: the next number is past the highest either store has seen, so both platforms carry the same number for the same release. Any machine gets the same answer, and nothing needs bumping by hand. Bump the version name in `pubspec.yaml` only when the user asks for it (patch / minor / major), then commit.
 3. Write the release notes `fastlane/metadata/android/<locale>/changelogs/<code>.txt` for every locale (see ship-listing).
-4. `$FL android release`. It runs preflight, pulls the vault, builds with the vault upload key, checks the bundle's signature, uploads to the `play.track` from ship.yml (default `internal`) with status `draft`, and pushes a git tag `android/<name>+<code>`.
+4. `$FL android release`. It runs preflight, pulls the vault, builds with the vault upload key, checks the bundle's signature, uploads to the `play.track` from ship.yml (default `internal`) and pushes a git tag `android/<name>+<code>`.
+   - Internal testing is always rolled out (`completed`): never leave an internal build as a draft, there is no point (Nathan). Other tracks use `play.release_status` (draft by default). An app never published yet only takes drafts; the lane falls back to a draft then and says so.
+   - An internal build left as a draft by an older version of the lanes: `$FL android promote from:internal to:internal status:completed version_code:<code>`.
    - Add `metadata:true` to also send the listing text and images.
    - If it reports that Play does not know the app yet: the bundle is built. Give the user the printed one-time steps (manual upload in Play Console), then stop.
 5. Commit the changelog files.
-6. Tell the user: version, track, status, and that the draft is waiting in Play Console > Test and release > <track> (review and roll out there).
+6. Tell the user: version, track and status. On internal the build is live for testers; on another track left as a draft, it waits in Play Console > Test and release > <track>.
 7. `$FL ship_status`, and add its open steps to the report (ship-status skill).
 
 A build takes several minutes. Run it in the background and wait.

@@ -5,7 +5,7 @@ Ship Flutter apps to Google Play and the App Store (TestFlight) with fastlane an
 - **Shared lanes**: each app's `fastlane/Fastfile` imports `fastlane/Fastfile` from this repo, so a fix here reaches every app.
 - **Key vault**: upload keystores and Play service account keys are AES-256-GCM encrypted in a private git repo (`ship-vault`). Every machine builds with the same key. You keep one passphrase in your password manager.
 - **Version codes from Play**: the next code is the highest one Google Play has ever seen + 1, so two computers never collide. The version name stays in `pubspec.yaml`.
-- **Draft by default**: builds go to the internal track as a draft; you roll out (or promote to production) when you want.
+- **Internal goes live, production waits**: builds go to internal testing, rolled out at once; promotion to production is a draft until you send it.
 - **Store content as files**: listing text, release notes, screenshots, icon and feature graphic live in `fastlane/metadata` (fastlane supply layout). `scripts/shots.py` drives an emulator and renders framed screenshots at store sizes.
 - **Claude Code skills**: `ship-setup`, `ship-init`, `ship-listing`, `ship-screenshots`, `ship-android`, `ship-ios`.
 - **iOS without a Mac**: Apple keys in the vault, certificate and profile through the App Store Connect API, builds on a GitHub macOS runner, uploads to TestFlight.

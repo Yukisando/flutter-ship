@@ -12,7 +12,7 @@ contact:
   website: https://example.com
 play:
   track: internal          # internal | alpha (closed) | beta (open) | production
-  release_status: draft    # draft: finish the rollout in Play Console
+  release_status: draft    # other tracks; internal is always rolled out (completed)
   service_account: default # name of the key in the vault (google-play/<name>), invited by the app's Play account
 android:
   build_args: []           # extra `flutter build appbundle` arguments, e.g. --dart-define-from-file=prod.json
