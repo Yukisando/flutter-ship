@@ -2311,6 +2311,30 @@ platform :ios do
     UI.success("Listing for #{name} sent. Finish in App Store Connect: App Privacy, price and availability, then pick the build and submit.")
   end
 
+  desc 'Send only the screenshots (fastlane/screenshots/<locale>) to the pubspec version, created if missing. ' \
+       'No listing text, no submission: they go live with that version'
+  lane :screenshots do
+    Ship::Vault.sync!
+    next Ship.app_record_help unless Ship.asc_app
+    name, = Ship.pubspec_version
+    upload_to_app_store(
+      api_key: Ship.asc_api_key,
+      app_identifier: Ship.bundle_id,
+      app_version: name,
+      platform: 'ios',
+      skip_binary_upload: true,
+      skip_metadata: true,
+      screenshots_path: Ship.ios_screenshots_dir,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      ignore_language_directory_validation: true,
+      force: true
+    )
+    UI.success("Screenshots sent to #{name}. They go live when #{name} is submitted and approved.")
+  end
+
   desc 'Submit the pubspec version for App Review with its TestFlight build, released when approved.'
   desc 'Sends the listing text and release_notes.txt with it (not screenshots). build:N picks the build (default: newest of this version)'
   lane :submit do |options|

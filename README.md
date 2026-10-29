@@ -103,6 +103,7 @@ Run with `bundle exec fastlane <lane>` from the app root. Set `SHIP_LOCAL=/path/
 | `android preflight` | offline check against Play limits |
 | `android doctor` | tools, vault, Play access |
 | `ios certificate import:path.p12` | use a distribution certificate the Apple team already has |
+| `ios screenshots` | only `fastlane/screenshots/<locale>` to the pubspec version (created if missing), no text; live once that version is approved |
 | `products [only:android\|ios]` | create or update the in-app products of `ship.yml` on both stores |
 | `vault_add_play_key path: [name:]` | store a service account key in the vault |
 | `vault_list` | what the vault holds, without secrets |

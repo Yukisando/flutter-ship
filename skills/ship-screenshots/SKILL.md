@@ -75,3 +75,12 @@ $SHOTS graphics             # icon.png 512x512 and featureGraphic.png 1024x500 p
 Open at least the first rendered screenshot and the feature graphic with Read and check them: caption contrast, nothing cut off, colours on brand. Adjust `style` and re-render as needed. Then run `SHIP_LOCAL=$PLUGIN bundle exec fastlane android preflight`.
 
 Commit `fastlane/shots/` (config + raw captures) and the rendered images, so any machine can re-render without recapturing.
+
+## 6. Upload
+
+- Play: `bundle exec fastlane android metadata`. It syncs each `metadata/android/<locale>` folder, so delete any locale folder `frame` wrote that is not a Play listing language (`frame` falls back to the first locale's raws and captions for the others).
+- App Store: `bundle exec fastlane ios screenshots` sends only the screenshots, to the pubspec version (created in App Store Connect if missing). A live version cannot change its screenshots: they go live when that version is submitted and approved, which waits for the user's go. Keep only the App Store's listing languages under `fastlane/screenshots/`.
+
+## Demo data without production
+
+When the only realistic content is real users' data, run the app against the local Firebase emulators instead: a debug-only `--dart-define=USE_EMULATORS=true` switch in `main.dart` (Firestore, Auth, Storage, Functions on `10.0.2.2` for Android), `android:usesCleartextTraffic="true"` in `android/app/src/profile/AndroidManifest.xml` only, a profile APK (no debug banner), and a Node seed script that forces the `*_EMULATOR_HOST` variables before `firebase-admin` starts. Photos: cf-image portraits, uploaded to the storage emulator with a `firebaseStorageDownloadTokens` token so the app can load them. Grant permissions up front (`adb shell pm grant <pkg> android.permission.ACCESS_FINE_LOCATION` / `POST_NOTIFICATIONS`) so no system dialog lands in a capture. SpinLab (`tools/seed_screenshot_emulator.js`) is the worked example.
