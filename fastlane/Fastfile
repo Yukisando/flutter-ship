@@ -777,6 +777,11 @@ module Ship
   # developer.apple.com > Identifiers > the App ID. ensure_profile! then checks the profile carries them.
   PORTAL_ONLY_CAPABILITIES = %w[APP_ATTEST].freeze
 
+  # Capabilities Apple enables with a setting. Sign in with Apple: this App ID is the primary one.
+  CAPABILITY_SETTINGS = {
+    'APPLE_ID_AUTH' => [{ key: 'APPLE_ID_AUTH_APP_CONSENT', options: [{ key: 'PRIMARY_APP_CONSENT' }] }]
+  }.freeze
+
   # Registers the bundle id with the capabilities the app needs. Idempotent.
   def ensure_bundle_id!
     connect_asc!
@@ -790,7 +795,7 @@ module Ship
     (ios['capabilities'] || ['PUSH_NOTIFICATIONS']).each do |cap|
       next if have.include?(cap)
       next if PORTAL_ONLY_CAPABILITIES.include?(cap) # checked on the profile instead
-      bid.create_capability(cap)
+      bid.create_capability(cap, settings: CAPABILITY_SETTINGS.fetch(cap, []))
       UI.success("Enabled #{cap} on #{bundle_id}")
     end
     bid
