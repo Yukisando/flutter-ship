@@ -60,3 +60,8 @@ After a rejection, Publishing overview can keep the rejected release queued even
   The first production release is always a draft (`android promote`), sent for review from Publishing overview, which
   also lists any App content form still missing; the API cannot read those forms. `android check` says which case applies.
 - **The caller does not have permission**: the service account lacks access to this app in Play Console > Users and permissions.
+- **Policy error "App must use Google Play Billing Library version 8.0.0 or later"** while production is already on Billing 8:
+  Play checks every active release, test tracks included. Run `$FL android status`; an old code still completed on
+  alpha, beta or internal causes it. Check the new bundle with `unzip -p build/app/outputs/bundle/release/app-release.aab base/root/billing.properties`,
+  then on Nathan's go replace the old code on each test track: `$FL android promote from:production to:<track> version_code:<code> status:completed`.
+  Seen on Patoune, 2026-11-02 (build 5 left on alpha and internal).
