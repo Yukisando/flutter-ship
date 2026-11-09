@@ -80,7 +80,7 @@ fastlane/shots/shots.yml, raw/         screenshot plan, captions, raw captures
 fastlane/STORE_SETUP.md                one-time Play Console checklist
 fastlane/declarations.yml              Data safety, App Privacy, App content answers (ship-declare)
 fastlane/ship-done.yml                 steps no API can read, with the day they were done
-fastlane/ship-status.json              last `ship_status` result (git-ignored), read by the Ship Board
+fastlane/ship-status.json              last `ship_status` result (git-ignored), read by the Ship Board (ship_board.py)
 ```
 
 Release signing reads `SHIP_KEYSTORE_*` environment variables set by the lanes: see `templates/android/`.

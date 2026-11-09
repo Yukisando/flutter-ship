@@ -49,29 +49,31 @@ the first `[ ]` line says. Do the `Claude:` steps yourself (ship-declare covers 
 
 ## All apps: the Ship Board
 
-The dashboard is a Dashboard artifact; its link is `ship_board_url` in `~/.ship/config.yml`. To refresh it:
+The board is the Ship section of Nathan's dashboard, home.coldsnap.fr (the mind-palace site). Its data is one
+file in the mind-palace repo, `ship/board.json` (`ship_board_file` in `~/.ship/config.yml`), so both PCs and
+both Claude accounts update the same board. To refresh it:
 
-1. `python $PLUGIN/scripts/ship_board.py <scratchpad>/ship-board.json --refresh` (each app's lane in turn,
-   a few minutes; `--only Badalone,Seba` for some). Without `--refresh` it reads the last ship-status.json.
-2. Upload the file to the dashboard (Artifact publish, `url` = ship_board_url, `asset: true`,
-   `file_path` the JSON), then one ArtifactData `update` of `datasets/steps` with the new `source.url`,
-   `source.name` and `updated: {at, by: "ship_board.py"}`. The page itself does not change.
+1. `git -C ~/Documents/GitHub/mind-palace pull --rebase -q`, then
+   `python $PLUGIN/scripts/ship_board.py --refresh` (each app's lane in turn, a few minutes; `--only
+   Badalone,Seba` for some). Without `--refresh` it reads the last ship-status.json. Apps this machine did not
+   check keep their rows from the file, so the other PC's apps stay on the board.
+2. Commit `ship/board.json` in mind-palace (`ship: refresh <apps>`) and push. The site rebuilds and deploys on
+   the push (about 30 s); nothing else to update.
 3. Say in a few lines which apps are all green and the open steps worth doing today, `You:` ones first.
 
 Websites listed under `websites:` in `~/.ship/config.yml` (coldsnap.fr) get their own rows, group Website: HTTPS,
 redirects, sitemap, Search Console, a portfolio entry for every app with ship.yml, the `?v=` asset stamp and each
 app's privacy page, all read live by `ship_board.py`. A missing portfolio entry is Claude's to add.
 
-The page has a **Today** list: Nathan's open steps whose own prerequisites are done, ranked by how many open
+The section has a **Today** list: Nathan's open steps whose own prerequisites are done, ranked by how many open
 steps of the same app wait on them, then by minutes. The order and the minutes live in `ship_board.py`
-(`AFTER`, `MINUTES`, `YOURS`): add a new step there when you add one to the lane. The Open steps table filters by
-app and by Yours / Claude's. Nathan never ticks anything on the board. When he says he did a step, check it
-(rerun `ship_status`; for a recorded step, look in the console or API first, then `done:<step>`), refresh
-the board, and update the skill if the step taught something.
+(`AFTER`, `MINUTES`, `YOURS`): add a new step there when you add one to the lane. The ranking itself is in the
+site's `build.mjs` (mind-palace `site/`). Nathan never ticks anything on the board. When he says he did a step,
+check it (rerun `ship_status`; for a recorded step, look in the console or API first, then `done:<step>`),
+refresh the board, and update the skill if the step taught something.
 
-If `ship_board_url` is missing, the board does not exist yet: create it from the Dashboard type
-(Artifact quickstart, intent `other`), with a `steps` dataset (the JSON above, attached file) and a page
-that shows each app's progress and the open steps, then save its url as `ship_board_url`.
+An app with no `fastlane/ship.yml` is not on the board; its notes live in `~/.ship/vault/SHIPPING.md` until
+ship-init.
 
 ## Order of a full ship
 

@@ -17,7 +17,12 @@ version stamp and each app's privacy page, all read live.
         root: coldsnap                        # site folder inside the repo
         portfolio: coldsnap/data/projects.js  # an app opts out with `portfolio: false` in ship.yml
 
-    python ship_board.py out.json [--refresh] [--only Badalone,Seba]
+    python ship_board.py [out.json] [--refresh] [--only Badalone,Seba]
+
+Without out.json it writes to `ship_board_file` in ~/.ship/config.yml (the Ship section of
+home.coldsnap.fr reads it from the mind-palace repo). Apps this run did not check (another
+machine's apps, or ones left out by --only) keep their rows from the file already there, so two
+machines with different checkouts never wipe each other's apps.
 """
 import argparse
 import datetime
@@ -54,9 +59,7 @@ def who(step: str, how: str) -> str:
 
 
 def projects_dir() -> pathlib.Path:
-    config = pathlib.Path.home() / ".ship" / "config.yml"
-    data = yaml.safe_load(config.read_text(encoding="utf-8")) if config.exists() else {}
-    return pathlib.Path(os.path.expanduser((data or {}).get("projects_dir", "~/Documents/Projects")))
+    return pathlib.Path(os.path.expanduser(config().get("projects_dir", "~/Documents/Projects")))
 
 
 def apps(only: set[str]) -> list[pathlib.Path]:
@@ -157,15 +160,18 @@ def website_rows(name: str, site: dict) -> list[dict]:
              "who": who(i["id"], i["how"]), "after": "", "minutes": i["minutes"]} for i in items]
 
 
+def config() -> dict:
+    path = pathlib.Path.home() / ".ship" / "config.yml"
+    return (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}) or {}
+
+
 def websites() -> dict:
-    config = pathlib.Path.home() / ".ship" / "config.yml"
-    data = yaml.safe_load(config.read_text(encoding="utf-8")) if config.exists() else {}
-    return (data or {}).get("websites") or {}
+    return config().get("websites") or {}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("out")
+    ap.add_argument("out", nargs="?", help="default: ship_board_file in ~/.ship/config.yml")
     ap.add_argument("--refresh", action="store_true", help="run fastlane ship_status in each app first")
     ap.add_argument("--only", default="", help="comma-separated app folder names")
     args = ap.parse_args()
@@ -194,8 +200,19 @@ def main() -> None:
         site_rows = website_rows(name, site)
         rows += site_rows
         print(f"{name}: {sum(r['state'] == 'ok' for r in site_rows)}/{len(site_rows)}")
-    pathlib.Path(args.out).write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
-    print(f"{len(rows)} rows -> {args.out}")
+    out = args.out or config().get("ship_board_file")
+    if not out:
+        sys.exit("no output file: pass one, or set ship_board_file in ~/.ship/config.yml")
+    out = pathlib.Path(os.path.expanduser(out))
+    checked = {r["app"] for r in rows}
+    if out.exists():
+        kept = [r for r in json.loads(out.read_text(encoding="utf-8")) if r["app"] not in checked]
+        if kept:
+            print(f"kept from the previous file: {', '.join(sorted({r['app'] for r in kept}))}")
+        rows += kept
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(rows, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    print(f"{len(rows)} rows -> {out}")
 
 
 if __name__ == "__main__":
