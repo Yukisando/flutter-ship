@@ -58,7 +58,9 @@ fastlane/metadata/ios/
   review_information/    first_name, last_name, phone_number (+33 ...), email_address, notes
                          demo_user / demo_password only if a login is needed; keep them out of git
   age_rating.json        ageRatingDeclaration attributes (camelCase), e.g. "violenceRealistic": "NONE",
-                         "userGeneratedContent": true, "messagingAndChat": false, "advertising": false
+                         "userGeneratedContent": true, "messagingAndChat": false, "advertising": false,
+                         "socialMedia": false (required by Apple since 2026: true only for a social feed /
+                         follow / network app, which can force 13+; ask the owner, never guess)
 fastlane/screenshots/<locale>/*.png   6.9" iPhone 1320x2868 (ship-screenshots, `frame --store ios`)
 ```
 
