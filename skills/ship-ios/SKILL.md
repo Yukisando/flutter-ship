@@ -125,6 +125,10 @@ macOS runner as a zip on a draft GitHub release.
   other. The lane now queues them with a lock file on the Mac (`~/.ship-ios-signing.lock`): rerun the failed one.
   Start only one iOS build per Mac at a time when several sessions ship at once.
 - **"The Mac is offline"**: wake it (charger, logged in), or `runner:github` for this build.
+- **One app's Mac runner stays offline while the Mac's other runners are online** (its service stopped): the vault's
+  Mac runner workflow with `action=add` fails with "already configured". Run it with `action=remove` (token from
+  `repos/OWNER/REPO/actions/runners/remove-token`), then `action=add`: that re-registers and starts the service
+  (SpinLab, 2026-11-16).
 - **`pod install` says the specs repository is too out-of-date**: the Mac workflow refreshes specs before
   building; an app on an older `ios-release.yml` needs the current template.
 - **CocoaPods is installed but broken**: `cocoapods` missing from the Gemfile (flutter runs `pod` inside `bundle exec`).
