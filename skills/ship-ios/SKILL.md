@@ -118,8 +118,11 @@ macOS runner as a zip on a draft GitHub release.
 ## Errors
 
 - **Invalid large app icon ... alpha channel**: flatten the AppIcon PNGs (no transparency).
-- **SDK version issue**: the runner's Xcode is too old for App Store Connect: update Xcode on the Mac
-  (App Store), or use a newer `macos-*` image on GitHub.
+- **SDK version issue / ITMS-90725** ("built with the iOS N SDK; starting <date>, apps must be built with the iOS N+1 SDK"): a warning
+  first, a refusal at the date. Rule: always build with the newest stable Xcode, on every app, unless one truly
+  can't (then write down why in its ship.yml). The workflow picks the newest `/Applications/Xcode*.app` on the Mac
+  by itself (0.5.27+; older apps: copy the template's Xcode step), so the fix is updating Xcode on the Mac
+  (App Store > Updates, Apple ID needed: the user's), then release again. GitHub runners take `latest-stable`.
 - **"Command CodeSign failed" or "No signing certificate ... with a private key" on the Mac**, while another app's
   iOS build ran at the same time: builds before 0.5.11 shared the user keychain search list and reset it under each
   other. The lane now queues them with a lock file on the Mac (`~/.ship-ios-signing.lock`): rerun the failed one.

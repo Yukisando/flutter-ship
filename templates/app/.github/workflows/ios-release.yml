@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   release:
-    # App Store Connect only takes builds from the current Xcode (iOS 26 SDK since 2026).
+    # App Store Connect only takes builds from the current Xcode (see the Xcode step below).
     runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"macos-26"') }}
     timeout-minutes: 60
     env:
@@ -45,11 +45,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # A self-hosted Mac uses the Xcode selected on it (xcode-select needs sudo there).
+      # Always the newest stable Xcode: App Store Connect warns (ITMS-90725) and then refuses builds
+      # made with an older SDK a few months after each September release. GitHub's runners pick it
+      # here; a self-hosted Mac (xcode-select needs sudo there) uses the newest Xcode in
+      # /Applications through DEVELOPER_DIR, so updating Xcode on the Mac is all it takes.
       - uses: maxim-lobanov/setup-xcode@v1
         if: runner.environment == 'github-hosted'
         with:
           xcode-version: latest-stable
+
+      - name: Newest Xcode on the Mac
+        if: runner.environment != 'github-hosted'
+        run: |
+          best=""; bestv="0"
+          for app in /Applications/Xcode*.app; do
+            case "$app" in *[Bb]eta*) continue ;; esac
+            v=$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null) || continue
+            if [ "$(printf '%s\n%s\n' "$bestv" "$v" | sort -V | tail -1)" = "$v" ]; then best="$app"; bestv="$v"; fi
+          done
+          [ -n "$best" ] && echo "DEVELOPER_DIR=$best/Contents/Developer" >> "$GITHUB_ENV"
+          echo "::notice::Xcode $bestv ($best). Keep the Mac on the latest Xcode (App Store > Updates)."
 
       - name: Checkout flutter-ship lanes
         uses: actions/checkout@v4
