@@ -83,6 +83,8 @@ macOS runner as a zip on a draft GitHub release.
   no Android system UI visible).
 - iPhone only unless the app is designed for iPad: `TARGETED_DEVICE_FAMILY = 1` in the Runner target. A build that
   also targets iPad makes 13" iPad screenshots mandatory at submission.
+- `$FL ios unsubmit` removes the version waiting for App Review (nothing goes live), e.g. to swap in a new build;
+  then `$FL ios submit build:N` sends it back (end of Apple's queue).
 - `$FL ios check` lists what App Store Connect still needs before Add for Review: build picked, copyright, listing
   and iPhone screenshots per locale, review contact, sign-in, category, age rating, privacy URL, content rights,
   price, availability. `$FL ios check fix:true` also sets the three the API allows from `ship.yml`

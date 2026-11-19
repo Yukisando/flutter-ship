@@ -2387,6 +2387,18 @@ platform :ios do
     UI.success("#{name} (#{build.version}) is waiting for App Review. It goes live by itself once approved.")
   end
 
+  desc 'Pull the version waiting for App Review back out (Remove from Review), e.g. to swap its build. ' \
+       'Nothing goes live; the version becomes editable again and `ios submit build:N` sends it back'
+  lane :unsubmit do
+    Ship::Vault.sync!
+    a = Ship.asc_app
+    next Ship.app_record_help unless a
+    sub = a.get_in_progress_review_submission(platform: Spaceship::ConnectAPI::Platform::IOS)
+    next UI.important('Nothing is waiting for App Review.') unless sub
+    sub.cancel_submission
+    UI.success("Removed from App Review (submission #{sub.id}). It takes a minute to become editable.")
+  end
+
   desc 'Show the App Store versions and the latest builds'
   lane :status do
     Ship::Vault.sync!
