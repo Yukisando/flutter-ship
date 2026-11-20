@@ -929,6 +929,24 @@ module Ship
     Spaceship::ConnectAPI::App.find(bundle_id)
   end
 
+  # App Store Connect closes a version to new builds once Apple approves it ("Invalid Pre-Release
+  # Train ... closed for new build submissions", 90186). Checked before an iOS build starts, so a
+  # 15-minute Mac build does not end in that error (Exploreum 1.0.9, 2026-11-20).
+  CLOSED_TRAIN = %w[READY_FOR_SALE READY_FOR_DISTRIBUTION PENDING_DEVELOPER_RELEASE PENDING_APPLE_RELEASE
+                    PROCESSING_FOR_APP_STORE ACCEPTED REPLACED_WITH_NEW_VERSION REMOVED_FROM_SALE].freeze
+
+  def ios_train_open!(name)
+    Ship::Vault.sync!
+    app = asc_app
+    return unless app
+    v = app.get_app_store_versions(filter: { platform: 'IOS', versionString: name.to_s }).first
+    return unless v && CLOSED_TRAIN.include?(v.app_store_state)
+    UI.user_error!("App Store version #{name} is #{v.app_store_state}: Apple takes no new builds for it. " \
+                   'Bump the version in pubspec (patch, shared with Play), commit and push, then release again.')
+  rescue Spaceship::UnexpectedResponse, Faraday::Error => e
+    UI.important("Could not check the App Store version #{name} (#{e.class}); building anyway.")
+  end
+
   # Raw App Store Connect API call, for resources Spaceship does not model (prices, availability...).
   # Returns the parsed JSON body, or nil on 404 (and on an empty body).
   def asc_request(klass, path, body = nil)
@@ -2554,6 +2572,7 @@ platform :ios do
   desc 'Build and upload to TestFlight. Off macOS this starts the iOS workflow on the owner Mac (config.yml mac_runner:),'
   desc 'registering its runner there on first use, or on GitHub. runner:github forces GitHub for this build'
   lane :release do |options|
+    Ship.ios_train_open!(Ship.pubspec_version.first)
     next Ship.dispatch_ios_workflow!('release', runner: options[:runner]) unless Ship::MAC
     Ship::Vault.sync!
     name, = Ship.pubspec_version
@@ -2578,6 +2597,7 @@ platform :ios do
     plist = File.read(plist_path)
     version = plist[%r{<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>}, 1]
     number = plist[%r{<key>CFBundleVersion</key>\s*<string>([^<]+)</string>}, 1]
+    Ship.ios_train_open!(version)
     tag = "ios-xcode/#{version}+#{number}"
     zip = File.join(Dir.tmpdir, "#{Ship.bundle_id}-xcode-#{version}-#{number}.zip")
     FileUtils.rm_f(zip)

@@ -144,8 +144,10 @@ macOS runner as a zip on a draft GitHub release.
   out-of-date") right after the Firebase Flutter plugins were upgraded: a committed `ios/Podfile.lock` still pins the
   old Firebase SDK. Most Flutter apps ignore that file; if `.gitignore` lists it, `git rm ios/Podfile.lock`, push and
   release again (SpinLab, 2026-10-24). If the app deliberately tracks it, run `pod update Firebase` on a Mac checkout.
+- **"The self-hosted runner lost communication"**: the Mac slept mid-build. The workflow's caffeinate step
+  (0.5.29+) holds it awake while a job runs; a closed lid still sleeps it. Check the runners online, then release again.
 - **The train version is closed / version already live**: an App Store version that Apple approved takes no new
-  builds. When `ios status` shows the pubspec version live, bump the patch in pubspec (both stores share it), commit,
+  builds (`ios release` checks this first since 0.5.29 and stops in seconds). When `ios status` shows the pubspec version live, bump the patch in pubspec (both stores share it), commit,
   then release.
 - **ios setup: the profile lacks <entitlement>**: a capability in Runner.entitlements has no API (App Attest):
   ship-declare section 4 has the click path.

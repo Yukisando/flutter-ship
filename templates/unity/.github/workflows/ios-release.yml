@@ -51,6 +51,13 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # The Mac must not doze off mid-build: macOS idle sleep cut the runner's connection and failed
+      # builds halfway ("The self-hosted runner lost communication"). caffeinate holds the Mac awake
+      # (display may dim) until the job ends; the runner kills it with the job's other processes.
+      - name: Keep the Mac awake during the build
+        if: runner.environment != 'github-hosted'
+        run: nohup caffeinate -ims -t 5400 >/dev/null 2>&1 &
+
       - name: Newest Xcode on the Mac
         if: runner.environment != 'github-hosted'
         run: |
