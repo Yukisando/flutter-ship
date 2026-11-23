@@ -158,7 +158,7 @@ is never invited.
 Off macOS, `fastlane ios release` starts `.github/workflows/ios-release.yml`. With `mac_runner:` in
 `config.yml` (the vault's copy counts) that workflow runs on your own Mac, a self-hosted GitHub
 runner: no billed minutes, but the Mac must be on, awake (on the charger it never sleeps) and
-logged in. Without `mac_runner:` it runs on GitHub's `macos-26` runners.
+logged in. Without `mac_runner:` it runs on GitHub's `xcode-27` runners.
 
 ```yaml
 mac_runner:

@@ -6,7 +6,7 @@
 #   SHIP_VAULT_DEPLOY_KEY    SSH deploy key of the vault repo (write: renewing a profile pushes it)
 #
 # Repository variable (optional):
-#   IOS_RUNNER               where the job runs, as JSON. Unset: GitHub's macos-26 (billed minutes).
+#   IOS_RUNNER               where the job runs, as JSON. Unset: GitHub's xcode-27 image (billed minutes).
 #                            '["self-hosted","macOS","flutter-ship"]': the owner's own Mac, set up by
 #                            flutter-ship's scripts/mac-runner.sh (free, but the Mac must be on).
 #
@@ -33,7 +33,7 @@ concurrency:
 jobs:
   release:
     # App Store Connect only takes builds from the current Xcode (see the Xcode step below).
-    runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"macos-26"') }}
+    runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"xcode-27"') }}
     timeout-minutes: 60
     env:
       # Commit identity for the ios/<version> tag and vault pushes. Env, not `git config --global`,

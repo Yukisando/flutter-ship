@@ -200,7 +200,7 @@ cmd_github() {
   local repo="${1:?usage: mac-runner.sh github OWNER/REPO}"
   brew_env
   gh variable delete IOS_RUNNER -R "$repo"
-  echo "$repo builds on GitHub's macos-26 runners again (billed minutes)."
+  echo "$repo builds on GitHub's xcode-27 runners again (billed minutes)."
 }
 
 cmd_remove() {

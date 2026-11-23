@@ -9,7 +9,7 @@ description: Release a Flutter app to TestFlight / the App Store with flutter-sh
 iOS builds need macOS. On Windows/Linux, `ios release` and `ios build` start the app's
 `.github/workflows/ios-release.yml` instead: on the owner's Mac when `config.yml` has `mac_runner:` (the
 lane registers the app's runner there on first use and stops if the Mac is offline), else on a GitHub
-`macos-26` runner. Follow it with `gh run watch`. `$FL ios runner` shows where it will build;
+`xcode-27` runner. Follow it with `gh run watch`. `$FL ios runner` shows where it will build;
 `runner:github` builds on GitHub once. README, "iOS builds on your own Mac".
 
 ## Default release
