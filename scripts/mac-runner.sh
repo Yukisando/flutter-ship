@@ -7,6 +7,7 @@
 #   bash mac-runner.sh add OWNER/REPO [...]      # once per app repo: runner + IOS_RUNNER variable
 #   bash mac-runner.sh add-all OWNER             # every OWNER repo with fastlane/ship.yml and an iOS workflow
 #   bash mac-runner.sh status                    # each runner: service, process, GitHub (online, busy)
+#   bash mac-runner.sh keepalive                 # existing runners: restart by themselves after sleep
 #   bash mac-runner.sh remove OWNER/REPO         # unregister that repo's runner
 #   bash mac-runner.sh github OWNER/REPO         # send that repo back to GitHub's runners
 #
@@ -101,6 +102,41 @@ set_variable() {
   fi
 }
 
+# After the Mac sleeps, GitHub drops the runner's session ("Runner session is invalid") and the
+# listener exits 0, which svc.sh's plist (RunAtLoad only) never restarts: the runner stays offline
+# until someone runs svc.sh stop/start. KeepAlive makes launchd relaunch it. The plist change
+# takes effect when the service is next loaded.
+keep_alive() {
+  local plist
+  plist="$(cat "$1/.service" 2>/dev/null || true)"
+  [ -f "$plist" ] || return 0
+  plutil -replace KeepAlive -bool true "$plist"
+  plutil -replace ThrottleInterval -integer 30 "$plist"
+}
+
+has_keep_alive() {
+  local plist
+  plist="$(cat "$1/.service" 2>/dev/null || true)"
+  [ -f "$plist" ] && [ "$(plutil -extract KeepAlive raw "$plist" 2>/dev/null)" = true ]
+}
+
+# Every runner here: KeepAlive on, and services reloaded so it applies. A runner in the middle
+# of a job (this one too, when the vault's workflow runs it) is left for its next load.
+cmd_keepalive() {
+  local dir
+  for dir in "$RUNNERS"/*/; do
+    dir="${dir%/}"
+    [ -s "$dir/.service" ] || continue
+    keep_alive "$dir"
+    if pgrep -f "$dir/bin/Runner.Worker" >/dev/null 2>&1; then
+      echo "$(basename "$dir"): KeepAlive set, running a job: applies on its next restart"
+      continue
+    fi
+    (cd "$dir" && ./svc.sh stop >/dev/null 2>&1 || true; ./svc.sh start >/dev/null)
+    echo "$(basename "$dir"): KeepAlive set, service reloaded"
+  done
+}
+
 cmd_add() {
   local repo="${1:?usage: mac-runner.sh add OWNER/REPO}"
   local name="${repo#*/}"
@@ -129,6 +165,7 @@ cmd_add() {
     ./config.sh --unattended --replace --url "https://github.com/$repo" --token "$token" \
       --name "$(scutil --get LocalHostName)-$name" --labels "$LABELS" --work _work
     ./svc.sh install >/dev/null 2>&1 || true
+    keep_alive "$dir"
     ./svc.sh start
     ./svc.sh status | tail -3
   )
@@ -209,6 +246,8 @@ runner_status() {
   else
     echo "  service: not installed (cd $dir && ./svc.sh install && ./svc.sh start)"
   fi
+  if has_keep_alive "$dir"; then echo "  restart after sleep: on"
+  else echo "  restart after sleep: off (bash mac-runner.sh keepalive)"; fi
 
   proc="$(pgrep -f "$dir/bin/Runner.Listener" 2>/dev/null | head -1 || true)"
   if [ -n "$proc" ]; then echo "  process: Runner.Listener running (pid $proc)"
@@ -256,5 +295,6 @@ case "${1:-}" in
   remove) cmd_remove "${2:-}" ;;
   github) cmd_github "${2:-}" ;;
   status) cmd_status ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  keepalive) cmd_keepalive ;;
+  *) sed -n '2,14p' "$0"; exit 1 ;;
 esac

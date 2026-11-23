@@ -187,7 +187,8 @@ After that nothing is done on the Mac by hand. Before each dispatch, `ios releas
 a lane for one build, `ios.runner: github` in ship.yml for one app, or remove `mac_runner:` for all.
 A personal GitHub account cannot share a runner between repos, so each app gets its own idle runner
 under `~/actions-runners/` on the Mac. On the Mac itself: `bash mac-runner.sh status`, `remove`,
-`github OWNER/REPO` (back to GitHub). Apps whose `ios-release.yml` predates `IOS_RUNNER` build on
+`github OWNER/REPO` (back to GitHub). Runners restart by themselves after the Mac sleeps (launchd
+`KeepAlive`, set by `add`); runners added before 0.5.31 get it with `bash mac-runner.sh keepalive`. Apps whose `ios-release.yml` predates `IOS_RUNNER` build on
 GitHub with a warning until the template is copied in.
 
 The runner service cannot read the Mac's own `gh` login from the keychain, so registration tokens
