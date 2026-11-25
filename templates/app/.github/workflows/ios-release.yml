@@ -92,6 +92,13 @@ jobs:
           # Owner name and contact; a client vault may have none (ship.yml owner_name covers it).
           cp .ship/vault/config.yml ~/.ship/config.yml 2>/dev/null || true
           xcodebuild -version
+          # Xcode 27 or newer, always (Nathan, 2026-11-25): an older SDK gets ITMS-90725 and then
+          # App Store rejections. Stops here before anything is built or uploaded.
+          major=$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')
+          if [ "$major" -lt 27 ]; then
+            echo "::error::This runner has Xcode $major. iOS builds need Xcode 27 or newer: on GitHub use IOS_RUNNER=\"xcode-27\", on the Mac update Xcode (App Store > Updates)."
+            exit 1
+          fi
 
       - name: Flutter version from the repo
         id: flutter
