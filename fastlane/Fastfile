@@ -1130,6 +1130,12 @@ module Ship
   # as bare addresses. A failed upload never sinks an otherwise good build.
   def upload_crashlytics_dsyms
     tool = File.join(root, 'ios', 'Pods', 'FirebaseCrashlytics', 'upload-symbols')
+    # With Swift Package Manager on, Crashlytics comes as a package checked out under DerivedData.
+    unless File.exist?(tool)
+      spm = Dir.glob(File.join(Dir.home, 'Library', 'Developer', 'Xcode', 'DerivedData', '*', 'SourcePackages',
+                               'checkouts', 'firebase-ios-sdk', 'Crashlytics', 'upload-symbols'))
+      tool = spm.max_by { |f| File.mtime(f) } || tool
+    end
     gsp = File.join(root, 'ios', 'Runner', 'GoogleService-Info.plist')
     archive = Dir.glob(File.join(root, 'build', 'ios', 'archive', '*.xcarchive')).max_by { |f| File.mtime(f) }
     dsyms = archive && File.join(archive, 'dSYMs')
